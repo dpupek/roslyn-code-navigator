@@ -12,3 +12,25 @@
 - **Startup validation**: `Program.ConfigureEnvironment` ensures `NUGET_PACKAGES` and fallback folders are set and exist before building the host. Missing prerequisites cause an immediate shutdown with actionable error logs.
 - **Bounded parallelism**: Symbol search and other project-wide analyses use a shared `SemaphoreSlim` (configurable via `ROSLYN_MAX_PROJECT_CONCURRENCY`) to cap concurrent compilations, preserving responsiveness while still leveraging parallel work.
 - **Structured logging**: Diagnostic/console loggers are configured to emit only to stderr with consistent log levels (driven by `ROSLYN_LOG_LEVEL`/`LOG_LEVEL`), so agents can inspect progress without polluting stdout responses.
+
+
+## Decomposition & Shaping
+
+* Maintain a living plan (checkboxes) under docs for each Epic.
+* Generate a baseline spec of current behavior before changing code.
+* Group changes by iteration; complete and validate each iteration before the next.
+* Record questions and decisions alongside the plan.
+* Always decompose user stories into workflows, CRCs, and tasks (use the release roadmap).
+* Entropy: Watch for code entropy—prefer refactoring existing services, keep CRCs minimal, follow YAGNI/DTSTTCPW.
+* Ask Questions: Gather clarification when the solution is becoming overly complex.
+* Design: When writing plans/specs, avoid ambiguous language; write from the user/developer perspective.
+* **Epic blueprint**: When starting or continuing a major epic, ask the user if they want you to follow the shaping process below. If they agree, create/update artifacts under `docs/<short-name>-<case-number>/`:
+  1. **Epic definition** – summarize the big idea and success criteria (FogBugz epic case).
+  2. **Workflow spec** – `workflows.md` with personas, motivations, flow steps, and linked cases.
+  3. **Baseline & edge cases** – capture current state (link to existing specs) and record risks in `edge-cases.md`. Iterate workflows ↔ baseline ↔ edge cases.
+  4. **CRCs** – `crcs.md` listing classes/services/controllers (with namespaces) and their responsibilities/collaborators referenced to workflows.
+  5. **Stakeholder summary** – `stakeholder-summary.md` explaining value and usage for admins/learners/external stakeholders.
+  6. **Roadmap** – `roadmap.md` with phased checklists (data models, services, UI, permissions, dependencies).
+  7. **Commit** – check in the docs with a commit referencing the epic case.
+* Baseline/current-state docs should either link to existing specs or live alongside the new workflows.
+* Edge cases should feed back into workflows and CRCs early; don’t leave them for QA to discover.
