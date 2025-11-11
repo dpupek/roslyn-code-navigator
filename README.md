@@ -43,6 +43,40 @@ A C# MCP (Model Context Protocol) server that integrates with Microsoft's Roslyn
 
 ## Quick Setup
 
+### Recommended: Publish a self-contained Windows EXE
+This avoids rebuilds on each launch and is robust when multiple agents use the server simultaneously.
+
+1) Publish
+```powershell
+dotnet publish RoslynMcpServer/RoslynMcpServer.csproj -c Release -r win-x64 -p:SelfContained=true -p:PublishSingleFile=true -p:PublishTrimmed=false
+```
+
+2) Configure Codex to launch the EXE
+```toml
+[mcp_servers.roslyn_code_navigator]
+command = "E:\\Sandbox\\RoslynMCP\\RoslynMCP\\RoslynMcpServer\\bin\\Release\\net8.0\\win-x64\\publish\\RoslynMcpServer.exe"
+args = []
+env = {
+  DOTNET_ENVIRONMENT = "Production",
+  LOG_LEVEL = "Information",
+  ROSLYN_LOG_LEVEL = "Debug",
+  ROSLYN_VERBOSE_SECURITY_LOGS = "false",
+  ROSLYN_MAX_PROJECT_CONCURRENCY = "4"
+}
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+```
+
+WSL users can reference the same EXE via the `/mnt` path (ensure interop is enabled):
+```toml
+[mcp_servers.roslyn_code_navigator]
+command = "/mnt/e/Sandbox/RoslynMCP/RoslynMcpServer/bin/Release/net8.0/win-x64/publish/RoslynMcpServer.exe"
+args = []
+env = { DOTNET_ENVIRONMENT = "Production", LOG_LEVEL = "Information", ROSLYN_LOG_LEVEL = "Debug" }
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+```
+
 ### Windows
 Run the PowerShell setup script:
 ```powershell
