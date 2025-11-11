@@ -4,7 +4,8 @@ Param(
     [string]$ServerName = 'roslyn_code_navigator',
     [string]$LogLevel = 'Information',
     [string]$RoslynLogLevel = 'Debug',
-    [int]$MaxProjectConcurrency = 4
+    [int]$MaxProjectConcurrency = 4,
+    [bool]$Interactive = $true
 )
 
 Set-StrictMode -Version Latest
@@ -21,6 +22,36 @@ function Ensure-Dotnet() {
         exit 1
     }
     return $dotnet
+}
+
+function Prompt-Interactive() {
+    if (-not $Interactive) { return }
+
+    Write-Host "=== Roslyn MCP Server Installer (Interactive) ===" -ForegroundColor Green
+
+    # Target selection
+    Write-Host "Select install target:" -ForegroundColor Cyan
+    Write-Host "  [1] Windows  (default)"
+    Write-Host "  [2] WSL"
+    Write-Host "  [3] Both"
+    $choice = Read-Host "Enter choice (1-3)"
+    switch ($choice) {
+        '2' { $script:Target = 'WSL' }
+        '3' { $script:Target = 'Both' }
+        default { $script:Target = 'Windows' }
+    }
+
+    $sn = Read-Host "Server name [$ServerName]"
+    if (-not [string]::IsNullOrWhiteSpace($sn)) { $script:ServerName = $sn }
+
+    $ll = Read-Host "LOG_LEVEL [$LogLevel]"
+    if (-not [string]::IsNullOrWhiteSpace($ll)) { $script:LogLevel = $ll }
+
+    $rll = Read-Host "ROSLYN_LOG_LEVEL [$RoslynLogLevel]"
+    if (-not [string]::IsNullOrWhiteSpace($rll)) { $script:RoslynLogLevel = $rll }
+
+    $mpc = Read-Host "ROSLYN_MAX_PROJECT_CONCURRENCY [$MaxProjectConcurrency]"
+    if ($mpc -match '^[0-9]+$') { $script:MaxProjectConcurrency = [int]$mpc }
 }
 
 function Resolve-InstallDir() {
@@ -98,9 +129,10 @@ function Upsert-TomlSection($configPath, $sectionHeader, $newContent) {
         return
     }
     $text = Get-Content -Raw -Path $configPath
-    $pattern = "(?ms)^(\Q$sectionHeader\E[\s\S]*?)(?=^\[|\z)"
-    if ($text -match $pattern) {
-        $updated = [System.Text.RegularExpressions.Regex]::Replace($text, $pattern, $newContent)
+    $escapedHeader = [System.Text.RegularExpressions.Regex]::Escape($sectionHeader)
+    $pattern = "(?ms)^$escapedHeader[\s\S]*?(?=^\[|\z)"
+    if ([System.Text.RegularExpressions.Regex]::IsMatch($text, $pattern)) {
+        $updated = [System.Text.RegularExpressions.Regex]::Replace($text, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $newContent })
         Set-Content -Path $configPath -Value $updated -NoNewline
     } else {
         if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += "`n" }
@@ -114,6 +146,7 @@ function Configure-WindowsToml($serverName, $exePath) {
     $block = Build-TomlBlock-Windows $serverName $exePath
     Write-Info "Writing server entry to $configPath"
     Upsert-TomlSection -configPath $configPath -sectionHeader "[mcp_servers.$serverName]" -newContent $block
+    return $configPath
 }
 
 function Configure-WSLToml($serverName, $exePath) {
@@ -121,24 +154,8 @@ function Configure-WSLToml($serverName, $exePath) {
     $block = Build-TomlBlock-WSL $serverName $exePath
     $escaped = $block -replace '"','\"'
     Write-Info "Writing server entry to WSL ~/.codex/config.toml via wsl.exe"
-    $script = "mkdir -p ~/.codex && touch ~/.codex/config.toml && python3 - "$(@'
-import sys,re,os
-cfg=os.path.expanduser("~/.codex/config.toml")
-new=sys.stdin.read()
-try:
-    with open(cfg,'r',encoding='utf-8') as f: txt=f.read()
-except FileNotFoundError:
-    txt=''
-pat=re.compile(r'(?ms)^(\[mcp_servers\.roslyn_code_navigator\][\s\S]*?)(?=^\[|\Z)')
-if pat.search(txt):
-    txt=pat.sub(new,txt)
-else:
-    if txt and not txt.endswith("\n"): txt+="\n"
-    txt+=new
-with open(cfg,'w',encoding='utf-8') as f: f.write(txt)
-'@)
-""
-    wsl.exe bash -lc $script | Out-Null
+    # Ensure config file exists in WSL
+    Start-Process -FilePath wsl.exe -ArgumentList @('bash','-lc','mkdir -p ~/.codex && touch ~/.codex/config.toml') -Wait | Out-Null
     # Pipe the TOML via stdin in a second call (simplifies quoting)
     $cmd = "python3 - <<'PY'
 import sys,re,os
@@ -161,22 +178,71 @@ PY"
     $sw.Write($block)
     $sw.Close()
     $p.WaitForExit()
+    return "~/.codex/config.toml (WSL)"
 }
 
-# Main
-$dotnet = Ensure-Dotnet
-$installDir = Resolve-InstallDir
-$exePath = Publish-Exe -dotnet $dotnet -outputDir $installDir
+# Main with progress
+$actions = New-Object System.Collections.Generic.List[string]
+$stage = 0; $total = 6
 
+function Show-Progress([string]$activity,[string]$status) {
+    $percent = [int](($stage / $total) * 100)
+    Write-Progress -Activity $activity -Status $status -PercentComplete $percent
+}
+
+Prompt-Interactive
+
+$stage = 1; Show-Progress "Environment" "Checking .NET SDK"
+$dotnet = Ensure-Dotnet
+$actions.Add("dotnet detected: $dotnet")
+
+$stage = 2; Show-Progress "Install directory" "Resolving target folder"
+$installDir = Resolve-InstallDir
+$actions.Add("Install directory: $installDir")
+
+$stage = 3; Show-Progress "Build/Publish" "Publishing self-contained EXE"
+$exePath = Publish-Exe -dotnet $dotnet -outputDir $installDir
+$actions.Add("Published EXE: $exePath")
+
+$windowsConfigPath = $null
+$wslConfigPath = $null
+
+$stage = 4; Show-Progress "Configure" "Updating Codex TOML (Windows)"
 switch ($Target) {
-    'Windows' { Configure-WindowsToml -serverName $ServerName -exePath $exePath }
-    'WSL'     { Configure-WSLToml     -serverName $ServerName -exePath $exePath }
+    'Windows' {
+        $windowsConfigPath = Configure-WindowsToml -serverName $ServerName -exePath $exePath
+        $actions.Add("Updated Windows TOML: $windowsConfigPath -> [$ServerName]")
+    }
+    'WSL'     {
+        $wslConfigPath = Configure-WSLToml -serverName $ServerName -exePath $exePath
+        $actions.Add("Updated WSL TOML: $wslConfigPath -> [$ServerName]")
+    }
     'Both'    {
-        Configure-WindowsToml -serverName $ServerName -exePath $exePath
-        try { Configure-WSLToml -serverName $ServerName -exePath $exePath } catch { Write-Warn "WSL config update failed: $($_.Exception.Message). You can run scripts/install-wsl.sh inside WSL to configure manually." }
+        $windowsConfigPath = Configure-WindowsToml -serverName $ServerName -exePath $exePath
+        $actions.Add("Updated Windows TOML: $windowsConfigPath -> [$ServerName]")
+        try {
+            $wslConfigPath = Configure-WSLToml -serverName $ServerName -exePath $exePath
+            $actions.Add("Updated WSL TOML: $wslConfigPath -> [$ServerName]")
+        } catch {
+            Write-Warn "WSL config update failed: $($_.Exception.Message). You can run scripts/install-wsl.sh inside WSL to configure manually."
+        }
     }
 }
 
-Write-Info "Installation complete. EXE: $exePath"
-Write-Info "You can start the server with: codex mcp start $ServerName"
+$stage = 5; Show-Progress "Finalize" "Writing summary"
+Write-Progress -Activity "Complete" -Completed
 
+Write-Host "`n=== Installation Summary ===" -ForegroundColor Green
+Write-Host "Target            : $Target"
+Write-Host "Server Name       : $ServerName"
+Write-Host "Log Level         : $LogLevel"
+Write-Host "Roslyn Log Level  : $RoslynLogLevel"
+Write-Host "Max Concurrency   : $MaxProjectConcurrency"
+Write-Host "EXE Path          : $exePath"
+if ($windowsConfigPath) { Write-Host "Windows TOML      : $windowsConfigPath" }
+if ($wslConfigPath)     { Write-Host "WSL TOML          : $wslConfigPath" }
+
+Write-Host "`nActions:" -ForegroundColor Cyan
+$actions | ForEach-Object { Write-Host " - $_" }
+
+Write-Host "`nStart the server: codex mcp start $ServerName" -ForegroundColor Cyan
