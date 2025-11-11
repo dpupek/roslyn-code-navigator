@@ -76,18 +76,72 @@ Add the following to your `claude_desktop_config.json` file:
       "args": [
         "run", 
         "--project", 
-        "/path/to/RoslynMCP/RoslynMcpServer"
+        "/absolute/path/to/RoslynMCP/RoslynMcpServer"
       ],
       "env": {
         "DOTNET_ENVIRONMENT": "Production",
-        "LOG_LEVEL": "Information"
+        "LOG_LEVEL": "Information",
+        "ROSLYN_LOG_LEVEL": "Debug",
+        "ROSLYN_VERBOSE_SECURITY_LOGS": "false"
       }
     }
   }
 }
 ```
 
-**Important**: Replace `/path/to/RoslynMCP/RoslynMcpServer` with the actual absolute path to your project directory.
+Important: Use an absolute path. If you are running on Windows Subsystem for Linux (WSL) but want to use Windows MSBuild, prefer the Codex CLI configuration below which launches the Windows `dotnet.exe`.
+
+## Codex CLI Configuration
+
+Codex expects MCP servers to be configured under the `[mcp_servers]` table in `~/.codex/config.toml` (see the [Codex config docs](https://github.com/openai/codex/blob/main/docs/config.md#mcp-integration) for details). Add an entry like the following, updating the absolute paths so they point at your local checkout:
+
+```toml
+[mcp_servers.roslyn_code_navigator]
+# Option A: Launch Windows dotnet (recommended if your solution relies on VS/Windows NuGet fallbacks)
+command = "/mnt/c/Program Files/dotnet/dotnet.exe"
+args = ["run", "--project", "E:\\Sandbox\\RoslynMCP\\RoslynMCP\\RoslynMcpServer\\RoslynMcpServer.csproj"]
+
+# Option B: Launch Linux dotnet inside WSL (make sure NuGet fallbacks exist on Linux)
+# command = "dotnet"
+# args = ["run", "--project", "/mnt/e/Sandbox/RoslynMCP/RoslynMcpServer/RoslynMcpServer.csproj"]
+
+env = {
+  DOTNET_ENVIRONMENT = "Production",
+  LOG_LEVEL = "Information",
+  ROSLYN_LOG_LEVEL = "Debug",
+  ROSLYN_VERBOSE_SECURITY_LOGS = "false",
+  # Tune how many projects compile concurrently (default heuristic: cores/2, max 8)
+  ROSLYN_MAX_PROJECT_CONCURRENCY = "4"
+}
+# Optional overrides
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+```
+
+The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_navigator` (or automatically when a tool request requires it) and communicate over stdio.
+
+### Codex CLI commands
+- Start the server manually: `codex mcp start roslyn_code_navigator`
+- List available tools: `codex mcp tools roslyn_code_navigator list`
+- Validate server is reachable: `codex mcp ping roslyn_code_navigator`
+- Tail server logs (if supported by your shell setup): check stderr output in your terminal or use your terminal multiplexer.
+
+Note: Adding a server is done by editing `~/.codex/config.toml` as shown above. Some Codex builds may include an interactive helper, but it is not required; editing the config and running `codex mcp start <name>` is sufficient.
+
+### Logging, NuGet & environment notes
+
+- `ROSLYN_LOG_LEVEL` overrides the console log threshold used by the server (falls back to `LOG_LEVEL` if not set). Valid values match `Microsoft.Extensions.Logging.LogLevel` (`Trace`, `Debug`, `Information`, etc.).
+- `ROSLYN_VERBOSE_SECURITY_LOGS` enables detailed reasoning when solution-path validation fails, which is useful when agents surface `Invalid solution path provided.`. Set it to `true` to emit warnings with the exact failure reason.
+- NuGet fallbacks are validated at startup. If required fallback folders don’t exist, the server logs a clear error and exits immediately rather than hanging during MSBuild package resolution. You can override/define:
+  - `NUGET_PACKAGES` (defaults to `~/.nuget/packages` if unset)
+  - `NUGET_FALLBACK_PACKAGES` and/or `RestoreAdditionalProjectFallbackFolders` (on Windows defaults to `C:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages`; on WSL we translate that path when present).
+- If your Codex CLI runs under WSL but your repo depends on Windows-only NuGet fallback folders, point the MCP config at the Windows `dotnet.exe` and pass a Windows-style project path (as shown above). Codex will still proxy the stdio bridge across WSL, but MSBuild runs in Windows, so restore/build steps succeed.
+- Concurrency: `ROSLYN_MAX_PROJECT_CONCURRENCY` controls the number of projects compiled in parallel during symbol searches to reduce memory pressure on large solutions.
+- Timeouts and cancellation: MCP tool calls time out by default after `tool_timeout_sec` (e.g., 120s). All tools propagate cancellation tokens and will stop work promptly when the client cancels.
+
+### Paths and solution visibility
+- When launching with Windows `dotnet.exe`, prefer Windows-style paths in args and tool inputs (e.g., `E:\\...\\Solution.sln`).
+- When launching with Linux `dotnet`, use WSL paths (e.g., `/mnt/e/.../Solution.sln`). Ensure the file paths are accessible from the chosen runtime.
 
 ## Usage
 
@@ -114,6 +168,8 @@ Analyze dependencies for the solution at C:\MyProject\MyProject.sln
 ```
 
 ### Code Complexity Analysis
+
+Note: Long-running operations include bounded parallelism and fail-fast cancellation. If an operation is canceled by the client (e.g., tool timeout), work will stop promptly and return an error message; there is no protocol-level heartbeat, so rely on logs for live progress.
 ```
 Find methods with complexity higher than 7 in C:\MyProject\MyProject.sln
 ```
@@ -139,6 +195,9 @@ npm install -g @modelcontextprotocol/inspector
 # Test your server
 npx @modelcontextprotocol/inspector dotnet run --project ./RoslynMcpServer
 ```
+
+### Building while the server is running
+On Windows, rebuilding while `RoslynMcpServer` is running can fail with file lock warnings. Stop the running MCP server (or build to a different output folder with `-o`) before rebuilding.
 
 ## Architecture
 
