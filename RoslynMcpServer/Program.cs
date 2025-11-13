@@ -21,21 +21,7 @@ namespace RoslynMcpServer
                 builder.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Information));
             var tempLogger = loggerFactory.CreateLogger<Program>();
 
-            // Register MSBuild before any workspace operations
-            // This is required for Roslyn to find MSBuild
-            if (!MSBuildLocator.IsRegistered)
-            {
-                try
-                {
-                    MSBuildLocator.RegisterDefaults();
-                    tempLogger.LogInformation("MSBuild registered successfully");
-                }
-                catch (Exception ex)
-                {
-                    tempLogger.LogError(ex, "Failed to register MSBuild: {Message}", ex.Message);
-                    Environment.Exit(1);
-                }
-            }
+            RegisterMsbuild(tempLogger);
 
             ConfigureEnvironment(tempLogger);
 
@@ -79,6 +65,56 @@ namespace RoslynMcpServer
             catch (Exception ex)
             {
                 tempLogger.LogError(ex, "Failed to start MCP server: {Message}", ex.Message);
+                Environment.Exit(1);
+            }
+        }
+
+        private static void RegisterMsbuild(ILogger logger)
+        {
+            if (MSBuildLocator.IsRegistered)
+            {
+                return;
+            }
+
+            try
+            {
+                var instances = MSBuildLocator.QueryVisualStudioInstances().ToArray();
+                if (instances.Length == 0)
+                {
+                    MSBuildLocator.RegisterDefaults();
+                    logger.LogInformation("MSBuild registered via defaults (no instances enumerated).");
+                    return;
+                }
+
+                VisualStudioInstance preferred;
+
+                var sdkInstances = instances
+                    .Where(instance => instance.DiscoveryType == DiscoveryType.DotNetSdk)
+                    .OrderByDescending(instance => instance.Version)
+                    .ToArray();
+
+                if (sdkInstances.Length > 0)
+                {
+                    preferred = sdkInstances.First();
+                }
+                else
+                {
+                    preferred = instances
+                        .OrderByDescending(instance => instance.Version)
+                    .ThenBy(instance => instance.DiscoveryType == DiscoveryType.DotNetSdk ? 0 : 1)
+                    .First();
+                }
+
+                MSBuildLocator.RegisterInstance(preferred);
+                logger.LogInformation(
+                    "MSBuild registered from {DiscoveryType} @ {Path} (Version {Version})",
+                    preferred.DiscoveryType,
+                    preferred.MSBuildPath,
+                    preferred.Version);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to register MSBuild: {Message}", ex.Message);
                 Environment.Exit(1);
             }
         }

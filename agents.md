@@ -5,6 +5,9 @@
 - Faulted solution loads poison the cache indefinitely. Cache entries must be evicted when `LoadSolutionAsync` throws to avoid permanent failures for a given `.sln`.
 - NuGet fallback folders missing on WSL/Windows are a silent failure mode. Validate the configured fallback directories on startup (before spinning up the MCP server) and exit with a clear log if they are absent.
 - Unbounded parallel project fan-out can overwhelm memory/CPU and starve Roslyn, resulting in agent-visible timeouts. Bounded concurrency is essential when a workspace has dozens of compilable projects.
+- Codex CLI does **not** expose `mcp start/stop`. When you need to restart the server (e.g., after a rebuild), stop the running `RoslynMcpServer.exe` process yourself (Task Manager or `Stop-Process`) so builds don’t fail with MSB3026/MSB3021.
+- Prompt quality matters: explicitly mention “use the `roslyn_code_navigator` MCP server” (see README prompt recipes) to prevent Codex from guessing or browsing.
+- Mixed-language scenarios (C# + VB) are now supported and tested; include VB assets/tests whenever reproducing issues to keep parity coverage.
 
 ## Established Patterns
 - **Cancellation-first APIs**: All service/tool entry points accept a `CancellationToken` and pass it to Roslyn, linked CTS, and any custom loops. Throw on token cancellation inside long loops (project enumeration, namespace scans, symbol recursion).
@@ -12,6 +15,9 @@
 - **Startup validation**: `Program.ConfigureEnvironment` ensures `NUGET_PACKAGES` and fallback folders are set and exist before building the host. Missing prerequisites cause an immediate shutdown with actionable error logs.
 - **Bounded parallelism**: Symbol search and other project-wide analyses use a shared `SemaphoreSlim` (configurable via `ROSLYN_MAX_PROJECT_CONCURRENCY`) to cap concurrent compilations, preserving responsiveness while still leveraging parallel work.
 - **Structured logging**: Diagnostic/console loggers are configured to emit only to stderr with consistent log levels (driven by `ROSLYN_LOG_LEVEL`/`LOG_LEVEL`), so agents can inspect progress without polluting stdout responses.
+- **PowerShell-first setup**: All documented setup/publish snippets assume Windows PowerShell. When guiding users, keep commands in that shell and remind them to publish with `-o` so Codex can target a stable exe path.
+- **Test harness**: Extend `RoslynMcpServer.Tests` + `TestAssets/SampleSolution` (now includes C# + VB projects) for new regressions instead of crafting ad-hoc samples.
+- **ShowHelp tool**: Encourage agents to run the `ShowHelp` MCP tool during sessions to refresh recipes/capabilities quickly.
 
 
 ## Decomposition & Shaping

@@ -6,7 +6,9 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using RoslynMcpServer.Models;
 using RoslynMcpServer.Services;
+using System;
 using System.ComponentModel;
+using System.IO;
 using System.Text;
 
 namespace RoslynMcpServer.Tools
@@ -29,11 +31,14 @@ namespace RoslynMcpServer.Tools
                 var logger = serviceProvider?.GetService<ILogger<CodeNavigationTools>>();
                 
                 // Validate inputs
-                if (!validator?.ValidateSolutionPath(solutionPath) ?? false)
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
                 {
-                    return "Error: Invalid solution path provided.";
+                    return $"Error: {validation.ErrorMessage}";
                 }
                 
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
                 var sanitizedPattern = validator?.SanitizeSearchPattern(pattern) ?? pattern;
                 
                 // Perform search with timeout
@@ -46,7 +51,7 @@ namespace RoslynMcpServer.Tools
                 }
                 
                 var results = await searchService.SearchSymbolsAsync(
-                    sanitizedPattern, solutionPath, symbolTypes, ignoreCase, linkedCts.Token);
+                    sanitizedPattern, normalizedPath, symbolTypes, ignoreCase, linkedCts.Token);
                 
                 return FormatSearchResults(results);
             }
@@ -83,18 +88,21 @@ namespace RoslynMcpServer.Tools
             try
             {
                 var validator = serviceProvider?.GetService<SecurityValidator>();
-                if (!validator?.ValidateSolutionPath(solutionPath) ?? false)
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
                 {
-                    return "Error: Invalid solution path provided.";
+                    return $"Error: {validation.ErrorMessage}";
                 }
                 
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
                 var searchService = serviceProvider?.GetService<SymbolSearchService>();
                 if (searchService == null)
                 {
                     return "Error: Symbol search service not available.";
                 }
                 
-                var results = await searchService.FindReferencesAsync(symbolName, solutionPath, includeDefinition, cancellationToken);
+                var results = await searchService.FindReferencesAsync(symbolName, normalizedPath, includeDefinition, cancellationToken);
                 return FormatReferenceResults(results);
             }
             catch (Exception ex)
@@ -115,18 +123,21 @@ namespace RoslynMcpServer.Tools
             try
             {
                 var validator = serviceProvider?.GetService<SecurityValidator>();
-                if (!validator?.ValidateSolutionPath(solutionPath) ?? false)
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
                 {
-                    return "Error: Invalid solution path provided.";
+                    return $"Error: {validation.ErrorMessage}";
                 }
                 
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
                 var searchService = serviceProvider?.GetService<SymbolSearchService>();
                 if (searchService == null)
                 {
                     return "Error: Symbol search service not available.";
                 }
                 
-                var info = await searchService.GetSymbolInfoAsync(symbolName, solutionPath, cancellationToken);
+                var info = await searchService.GetSymbolInfoAsync(symbolName, normalizedPath, cancellationToken);
                 return FormatSymbolInfo(info);
             }
             catch (Exception ex)
@@ -147,18 +158,21 @@ namespace RoslynMcpServer.Tools
             try
             {
                 var validator = serviceProvider?.GetService<SecurityValidator>();
-                if (!validator?.ValidateSolutionPath(solutionPath) ?? false)
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
                 {
-                    return "Error: Invalid solution path provided.";
+                    return $"Error: {validation.ErrorMessage}";
                 }
                 
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
                 var analysisService = serviceProvider?.GetService<CodeAnalysisService>();
                 if (analysisService == null)
                 {
                     return "Error: Code analysis service not available.";
                 }
                 
-                var dependencies = await analysisService.AnalyzeDependenciesAsync(solutionPath, maxDepth, cancellationToken);
+                var dependencies = await analysisService.AnalyzeDependenciesAsync(normalizedPath, maxDepth, cancellationToken);
                 return FormatDependencyAnalysis(dependencies);
             }
             catch (Exception ex)
@@ -179,18 +193,21 @@ namespace RoslynMcpServer.Tools
             try
             {
                 var validator = serviceProvider?.GetService<SecurityValidator>();
-                if (!validator?.ValidateSolutionPath(solutionPath) ?? false)
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
                 {
-                    return "Error: Invalid solution path provided.";
+                    return $"Error: {validation.ErrorMessage}";
                 }
                 
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
                 var analysisService = serviceProvider?.GetService<CodeAnalysisService>();
                 if (analysisService == null)
                 {
                     return "Error: Code analysis service not available.";
                 }
                 
-                var solution = await analysisService.GetSolutionAsync(solutionPath, cancellationToken);
+                var solution = await analysisService.GetSolutionAsync(normalizedPath, cancellationToken);
                 var complexityResults = new List<ComplexityResult>();
                 
                 foreach (var project in solution.Projects.Where(p => p.SupportsCompilation))
@@ -415,6 +432,20 @@ namespace RoslynMcpServer.Tools
         {
             var namespaceDeclaration = method.Ancestors().OfType<NamespaceDeclarationSyntax>().FirstOrDefault();
             return namespaceDeclaration?.Name.ToString() ?? "";
+        }
+
+        [McpServerTool, Description("Display the built-in Roslyn MCP help content.")]
+        public static string ShowHelp(IServiceProvider? serviceProvider = null)
+        {
+            var baseDirectory = AppContext.BaseDirectory;
+            var helpPath = Path.Combine(baseDirectory, "help.md");
+
+            if (!File.Exists(helpPath))
+            {
+                return $"Help file not found at '{helpPath}'.";
+            }
+
+            return File.ReadAllText(helpPath);
         }
     }
 }

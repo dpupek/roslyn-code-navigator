@@ -81,24 +81,13 @@ function Publish-Exe($dotnet, $outputDir) {
     return $exe
 }
 
-function Escape-TomlPath($path) {
-    # TOML needs backslashes escaped
-    return ($path -replace '\\','\\\\')
-}
-
 function Build-TomlBlock-Windows($serverName, $exePath) {
-    $p = Escape-TomlPath $exePath
+    $literalPath = $exePath -replace '''',''''''
     @"
 [mcp_servers.$serverName]
-command = "$p"
+command = '$literalPath'
 args = []
-env = {
-  DOTNET_ENVIRONMENT = "Production",
-  LOG_LEVEL = "$LogLevel",
-  ROSLYN_LOG_LEVEL = "$RoslynLogLevel",
-  ROSLYN_VERBOSE_SECURITY_LOGS = "false",
-  ROSLYN_MAX_PROJECT_CONCURRENCY = "$MaxProjectConcurrency"
-}
+env = { DOTNET_ENVIRONMENT = "Production", LOG_LEVEL = "$LogLevel", ROSLYN_LOG_LEVEL = "$RoslynLogLevel", ROSLYN_VERBOSE_SECURITY_LOGS = "false", ROSLYN_MAX_PROJECT_CONCURRENCY = "$MaxProjectConcurrency" }
 startup_timeout_sec = 30
 tool_timeout_sec = 120
 "@

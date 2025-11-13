@@ -16,6 +16,7 @@ namespace RoslynMcpServer.Services
         private readonly ILogger<SymbolSearchService> _logger;
         private readonly IMemoryCache _cache;
         private readonly int _maxParallelProjectOperations;
+        private static readonly SymbolDisplayFormat QualifiedSymbolFormat = SymbolDisplayFormat.CSharpErrorMessageFormat;
 
         public SymbolSearchService(CodeAnalysisService codeAnalysis, 
             ILogger<SymbolSearchService> logger, IMemoryCache cache)
@@ -238,7 +239,8 @@ namespace RoslynMcpServer.Services
             string symbolName, string solutionPath, bool includeDefinition, CancellationToken cancellationToken = default)
         {
             var solution = await _codeAnalysis.GetSolutionAsync(solutionPath, cancellationToken);
-            var targetSymbols = await FindSymbolsByNameAsync(solution, symbolName, cancellationToken);
+            var query = SymbolQuery.Create(symbolName);
+            var targetSymbols = await FindSymbolsByQueryAsync(solution, query, cancellationToken);
             
             var allReferences = new List<ReferenceResult>();
             
@@ -273,7 +275,7 @@ namespace RoslynMcpServer.Services
                 .ThenBy(r => r.LineNumber);
         }
 
-        private async Task<IEnumerable<ISymbol>> FindSymbolsByNameAsync(Solution solution, string symbolName, CancellationToken cancellationToken = default)
+        private async Task<IEnumerable<ISymbol>> FindSymbolsByQueryAsync(Solution solution, SymbolQuery query, CancellationToken cancellationToken = default)
         {
             var symbols = new List<ISymbol>();
             
@@ -284,7 +286,7 @@ namespace RoslynMcpServer.Services
                 if (compilation != null)
                 {
                     var projectSymbols = GetAllSymbolsRecursive(compilation.GlobalNamespace)
-                        .Where(s => s.Name.Equals(symbolName, StringComparison.OrdinalIgnoreCase));
+                        .Where(query.Matches);
                     symbols.AddRange(projectSymbols);
                 }
             }
@@ -344,7 +346,8 @@ namespace RoslynMcpServer.Services
         public async Task<SymbolInfo?> GetSymbolInfoAsync(string symbolName, string solutionPath, CancellationToken cancellationToken = default)
         {
             var solution = await _codeAnalysis.GetSolutionAsync(solutionPath, cancellationToken);
-            var symbols = await FindSymbolsByNameAsync(solution, symbolName, cancellationToken);
+            var query = SymbolQuery.Create(symbolName);
+            var symbols = await FindSymbolsByQueryAsync(solution, query, cancellationToken);
             var symbol = symbols.FirstOrDefault();
             
             if (symbol == null) return null;
@@ -389,6 +392,91 @@ namespace RoslynMcpServer.Services
             }
             
             return info;
+        }
+
+        private static Regex CreateQualifiedPatternRegex(string pattern)
+        {
+            var escaped = Regex.Escape(pattern)
+                .Replace("\\*", ".*")
+                .Replace("\\?", ".");
+
+            return new Regex($"^{escaped}$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        }
+
+        private sealed class SymbolQuery
+        {
+            private SymbolQuery(string? shortName, Regex? qualifiedPattern)
+            {
+                ShortName = shortName;
+                QualifiedPattern = qualifiedPattern;
+            }
+
+            public string? ShortName { get; }
+            public Regex? QualifiedPattern { get; }
+
+            public static SymbolQuery Create(string? raw)
+            {
+                var trimmed = raw?.Trim();
+                if (string.IsNullOrEmpty(trimmed))
+                {
+                    return new SymbolQuery(null, null);
+                }
+
+                var hasNamespaceSeparator = trimmed.Contains('.') ||
+                                            trimmed.Contains("::", StringComparison.Ordinal) ||
+                                            trimmed.Contains('+');
+
+                if (!hasNamespaceSeparator)
+                {
+                    return new SymbolQuery(trimmed, null);
+                }
+
+                var regex = CreateQualifiedPatternRegex(trimmed);
+                var shortSegment = ExtractTerminalSegment(trimmed);
+                return new SymbolQuery(shortSegment, regex);
+            }
+
+            public bool Matches(ISymbol symbol)
+            {
+                if (QualifiedPattern != null)
+                {
+                    var displayName = symbol.ToDisplayString(QualifiedSymbolFormat);
+                    if (QualifiedPattern.IsMatch(displayName))
+                    {
+                        return true;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(ShortName))
+                {
+                    return symbol.Name.Equals(ShortName, StringComparison.OrdinalIgnoreCase);
+                }
+
+                return false;
+            }
+
+            private static string? ExtractTerminalSegment(string value)
+            {
+                var lastDot = value.LastIndexOf('.');
+                if (lastDot >= 0 && lastDot < value.Length - 1)
+                {
+                    return value.Substring(lastDot + 1);
+                }
+
+                var lastColon = value.LastIndexOf("::", StringComparison.Ordinal);
+                if (lastColon >= 0 && lastColon < value.Length - 2)
+                {
+                    return value.Substring(lastColon + 2);
+                }
+
+                var lastPlus = value.LastIndexOf('+');
+                if (lastPlus >= 0 && lastPlus < value.Length - 1)
+                {
+                    return value.Substring(lastPlus + 1);
+                }
+
+                return value;
+            }
         }
 
         private static int ResolveParallelism()
