@@ -67,6 +67,10 @@ namespace RoslynMcpServer.Tools
             {
                 return "Error: Access denied. Please check file permissions.";
             }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
+            }
             catch (Exception ex)
             {
                 // Log full error details but return safe message
@@ -105,6 +109,10 @@ namespace RoslynMcpServer.Tools
                 var results = await searchService.FindReferencesAsync(symbolName, normalizedPath, includeDefinition, cancellationToken);
                 return FormatReferenceResults(results);
             }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
+            }
             catch (Exception ex)
             {
                 var logger = serviceProvider?.GetService<ILogger<CodeNavigationTools>>();
@@ -140,6 +148,10 @@ namespace RoslynMcpServer.Tools
                 var info = await searchService.GetSymbolInfoAsync(symbolName, normalizedPath, cancellationToken);
                 return FormatSymbolInfo(info);
             }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
+            }
             catch (Exception ex)
             {
                 var logger = serviceProvider?.GetService<ILogger<CodeNavigationTools>>();
@@ -174,6 +186,10 @@ namespace RoslynMcpServer.Tools
                 
                 var dependencies = await analysisService.AnalyzeDependenciesAsync(normalizedPath, maxDepth, cancellationToken);
                 return FormatDependencyAnalysis(dependencies);
+            }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
             }
             catch (Exception ex)
             {
@@ -246,6 +262,10 @@ namespace RoslynMcpServer.Tools
                 }
                 
                 return FormatComplexityResults(complexityResults);
+            }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
             }
             catch (Exception ex)
             {

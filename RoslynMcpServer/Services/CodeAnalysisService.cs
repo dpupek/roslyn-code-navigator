@@ -69,15 +69,49 @@ namespace RoslynMcpServer.Services
                 _logger.LogWarning(args.Diagnostic.ToString());
                 if (args.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
                 {
-                    throw new InvalidOperationException(args.Diagnostic.Message);
+                    var friendlyMessage = BuildFriendlyLoadFailureMessage(solutionPath, args.Diagnostic.Message);
+                    throw new SolutionLoadException(friendlyMessage, args.Diagnostic.Message);
                 }
             };
 
-            var solution = await workspace
-                .OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            _workspaces[solutionPath] = workspace;
-            return solution;
+            try
+            {
+                var solution = await workspace
+                    .OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                _workspaces[solutionPath] = workspace;
+                return solution;
+            }
+            catch (SolutionLoadException)
+            {
+                throw;
+            }
+            catch (InvalidOperationException ex)
+            {
+                var friendlyMessage = BuildFriendlyLoadFailureMessage(solutionPath, ex.Message);
+                throw new SolutionLoadException(friendlyMessage, ex.Message, ex);
+            }
+        }
+
+        private static string BuildFriendlyLoadFailureMessage(string solutionPath, string diagnosticMessage)
+        {
+            var solutionName = Path.GetFileName(solutionPath);
+            var baseMessage = $"MSBuild failed to load {(string.IsNullOrWhiteSpace(solutionName) ? solutionPath : solutionName)}.";
+
+            if (diagnosticMessage.Contains("was not found", StringComparison.OrdinalIgnoreCase) &&
+                diagnosticMessage.Contains("depends on", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{baseMessage} A referenced NuGet package could not be restored ({diagnosticMessage}). " +
+                       "Install the missing package or run 'dotnet restore' for the repository, then retry the tool.";
+            }
+
+            if (diagnosticMessage.Contains("GetFrameworkPath", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{baseMessage} The .NET SDK/targeting pack could not be located. Ensure the required workloads are installed. " +
+                       $"MSBuild reported: {diagnosticMessage}";
+            }
+
+            return $"{baseMessage} MSBuild reported: {diagnosticMessage}";
         }
 
         public async Task<DependencyAnalysis> AnalyzeDependenciesAsync(string solutionPath, int maxDepth = 3, CancellationToken cancellationToken = default)
