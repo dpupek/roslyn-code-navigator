@@ -17,4 +17,34 @@ public static class PathUtilities
         var remainder = trimmed.Substring(2).Replace('\\', '/').TrimStart('/');
         return $"/mnt/{driveLetter}/{remainder}";
     }
+
+    public static bool TryTranslateUnixPathToWindows(string? unixPath, out string windowsPath)
+    {
+        windowsPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(unixPath))
+        {
+            return false;
+        }
+
+        if (!unixPath.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase) || unixPath.Length < 7)
+        {
+            return false;
+        }
+
+        var driveLetter = unixPath[5];
+        if (!char.IsLetter(driveLetter))
+        {
+            return false;
+        }
+
+        var remainder = unixPath.Substring(6).TrimStart('/');
+        if (string.IsNullOrWhiteSpace(remainder))
+        {
+            return false;
+        }
+
+        var converted = remainder.Replace('/', '\\');
+        windowsPath = $"{char.ToUpperInvariant(driveLetter)}:\\{converted}";
+        return true;
+    }
 }

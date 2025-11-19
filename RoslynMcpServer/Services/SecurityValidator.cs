@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using RoslynMcpServer.Utilities;
 
 namespace RoslynMcpServer.Services
 {
@@ -66,7 +67,11 @@ namespace RoslynMcpServer.Services
             _sdkInventory = CaptureInstalledSdkInventory();
         }
         
-        public SolutionValidationResult ValidateSolutionPath(string path)
+        public SolutionValidationResult ValidateSolutionPath(string path) => ValidatePathInternal(path, requireSolutionExtension: true);
+
+        public SolutionValidationResult ValidateFilePath(string path) => ValidatePathInternal(path, requireSolutionExtension: false);
+
+        private SolutionValidationResult ValidatePathInternal(string path, bool requireSolutionExtension)
         {
             try
             {
@@ -74,23 +79,23 @@ namespace RoslynMcpServer.Services
 
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    return Fail("Solution path was empty. Provide the absolute path to the .sln file.", path);
+                    return Fail("Path was empty. Provide the absolute path to the target file.", path);
                 }
 
                 if (path.Contains("..") || path.Contains("~"))
                 {
-                    return Fail("Solution path contained unsupported traversal characters ('..' or '~'). Use an absolute path.", path);
+                    return Fail("Path contained unsupported traversal characters ('..' or '~'). Use an absolute path.", path);
                 }
 
                 var format = DeterminePathFormat(path);
                 if (format == PathFormat.Unknown)
                 {
-                    return Fail("Solution path must be an absolute Windows (e.g., E:\\repo\\app.sln) or Unix (/mnt/e/repo/app.sln) path.", path);
+                    return Fail("Path must be an absolute Windows (e.g., E:\\repo\\app.sln) or Unix (/mnt/e/repo/app.sln) path.", path);
                 }
 
                 if (!TryNormalizePathForHost(format, path, out workingPath, out var failureMessage, out var infoMessage))
                 {
-                    return Fail(failureMessage ?? "Solution path format is not supported on this host.", path);
+                    return Fail(failureMessage ?? "Path format is not supported on this host.", path);
                 }
 
                 if (!string.IsNullOrEmpty(infoMessage))
@@ -98,10 +103,13 @@ namespace RoslynMcpServer.Services
                     _logger.LogInformation(infoMessage);
                 }
 
-                var extension = Path.GetExtension(workingPath);
-                if (!_allowedExtensions.Contains(extension))
+                if (requireSolutionExtension)
                 {
-                    return Fail($"Only .sln and .csproj files are supported. Received '{extension}'.", workingPath);
+                    var extension = Path.GetExtension(workingPath);
+                    if (!_allowedExtensions.Contains(extension))
+                    {
+                        return Fail($"Only .sln and .csproj files are supported. Received '{extension}'.", workingPath);
+                    }
                 }
 
                 if (!File.Exists(workingPath))
@@ -109,10 +117,13 @@ namespace RoslynMcpServer.Services
                     return Fail($"No file was found at '{workingPath}'. Double-check the path and try again.", workingPath);
                 }
 
-                var sdkResult = EnsureSdkCompatibility(workingPath);
-                if (!sdkResult.IsValid)
+                if (requireSolutionExtension)
                 {
-                    return sdkResult;
+                    var sdkResult = EnsureSdkCompatibility(workingPath);
+                    if (!sdkResult.IsValid)
+                    {
+                        return sdkResult;
+                    }
                 }
 
                 LogValidationSuccess(workingPath);
@@ -120,7 +131,7 @@ namespace RoslynMcpServer.Services
             }
             catch (Exception ex)
             {
-                return Fail("Unexpected error while validating the solution path. Check server logs for details.", path, ex);
+                return Fail("Unexpected error while validating the path. Check server logs for details.", path, ex);
             }
         }
         
@@ -512,27 +523,7 @@ namespace RoslynMcpServer.Services
 
         private bool TryTranslateUnixToWindows(string path, out string windowsPath)
         {
-            windowsPath = string.Empty;
-            if (!path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase) || path.Length < 7)
-            {
-                return false;
-            }
-
-            var driveLetter = path[5];
-            if (!char.IsLetter(driveLetter))
-            {
-                return false;
-            }
-
-            var remainder = path.Substring(6).TrimStart('/');
-            var converted = remainder.Replace('/', '\\');
-            if (converted.Length == 0)
-            {
-                return false;
-            }
-
-            windowsPath = $"{char.ToUpperInvariant(driveLetter)}:\\{converted}";
-            return true;
+            return PathUtilities.TryTranslateUnixPathToWindows(path, out windowsPath);
         }
 
         private bool TryTranslateWindowsToWsl(string path, out string wslPath)

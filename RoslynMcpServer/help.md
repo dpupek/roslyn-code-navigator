@@ -9,7 +9,15 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 - **GetSymbolInfo** – Retrieve metadata (signature, accessibility, attributes) for a symbol.
 - **AnalyzeDependencies** - Summarize project/package relationships and namespace usage.
 - **AnalyzeCodeComplexity** - Report methods whose cyclomatic complexity exceeds a threshold.
+- **FindImplementations** - List classes implementing an interface or deriving from a base type.
 - **ShowHelp** - Emit this help document directly via an MCP tool call.
+- **ListProjects** - Display every project in a solution along with its target frameworks.
+- **RoslynEnv** - Display the server’s runtime/MSBuild environment plus dotnet/Visual Studio inventories for troubleshooting build/load issues.
+- **ListBuildRunners** - Return the structured list of dotnet SDKs, runtimes, Visual Studio instances, and shared runtime probe paths detected at startup.
+- **BuildSolution** - Run `dotnet build` using the Windows SDK/targeting packs detected by the server.
+- **TestSolution** - Run `dotnet test` with optional TRX logging via the Windows SDK.
+- **LegacyMsBuild** - Invoke Visual Studio’s `MSBuild.exe` for .NET Framework solutions/projects (x86/x64 aware).
+- **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies using Visual Studio Test tools.
 - Mixed-language solutions containing both C# and VB.NET projects are supported; VB symbols and references appear alongside C# ones.
 
 ## Usage Tips
@@ -21,6 +29,7 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 5. `FindReferences` and `GetSymbolInfo` accept fully qualified names (with `.` separators) and wildcards, so patterns like `My.Namespace.Text*.*` can target groups of types/members; omit the namespace to stick with the legacy exact-name lookup.
 6. When something fails, check the MCP server logs (stderr) for detailed diagnostics.
 7. If the MCP server is running from WSL, pass the `/mnt/<drive>/...` form of the solution path; Windows-style `E:\...` paths will be rejected. Conversely, when running on Windows use the drive-qualified form.
+8. To keep multiple agents from fighting over MSBuild worker processes, the server sets `MSBUILDDISABLENODEREUSE=1` by default—override it only if you understand the locking consequences.
 
 ## Recipes
 
@@ -37,9 +46,9 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 3. Capture both outputs for your session notes before diving into a feature.
 
 ### Track Interface Implementations
-1. Run **FindReferences** on the interface name with `includeDefinition=true` to list the definition plus all usage sites.
-2. Filter the results to definition entries—each will point to a class implementing the interface.
-3. For a large interface, layer in **SearchSymbols** with `pattern="*YourInterface*"` to double-check no implementations are missed.
+1. Run **FindImplementations** on the interface or base class name (wildcards supported) to list implementations/derived types.
+2. If you need the exact call sites, follow up with **FindReferences**.
+3. Use **SearchSymbols** to narrow to specific namespaces or assemblies before invoking **FindImplementations** when you only want a subset.
 
 ### Pre-refactor Impact Check
 1. Use **FindReferences** on the symbol you intend to rename/move.
@@ -49,17 +58,35 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 ### Dependency Impact Scan
 1. Before touching a shared project, run **AnalyzeDependencies** on the solution with a low depth (1–2).
 2. Look for projects/packages that list the target project as a dependency; note them in your plan.
-3. If any dependencies look unexpected, inspect their project files directly before proceeding.
+3. If any dependencies look unexpected, inspect their project files directly (the **ListProjects** tool can help confirm target frameworks quickly).
 
 ### Cross-language Sanity Check
 1. When a solution mixes C# and VB, run **SearchSymbols** twice: once for a C# type, once for a VB type (e.g., `LegacyCalculator`).
 2. Use **FindReferences** on the VB type to confirm cross-language call sites appear.
-3. If anything fails to load, check logs for `"language 'Visual Basic' is not supported"`—it usually means VB targeting packs are missing.
+3. If anything fails to load, check `roslyn_env` first (ensure DOTNET_ROOT/MSBuild path are correct) and use **ListProjects** to confirm the solution actually loaded the VB project.
+
+### Environment & Runner Discovery
+1. Run **RoslynEnv** after launching the server to capture OS, runtime, and the full toolchain inventory (dotnet SDK paths, runtime probe paths, Visual Studio MSBuild locations). Save the output in your session notes when troubleshooting build/test issues.
+2. Use **ListBuildRunners** when you need structured data (e.g., scripting): it returns arrays of SDKs, runtimes, VS instances, and probe paths that downstream tools can parse.
+3. Before invoking builds/tests, compare the solution’s target frameworks with the detected SDKs. If a required SDK is missing, surface the friendly guidance from `agents.md` instead of attempting a build that will fail halfway.
+4. When permissions suddenly block Windows binaries, re-run **RoslynEnv** to confirm the MSBuild path and remind the operator to re-approve the Windows toolchain, then retry.
+
+### Build from WSL Using dotnet
+1. Call **ListBuildRunners** to confirm the desired dotnet SDK version is installed (e.g., 10.0.100). If you need a specific SDK, pass `sdkVersion="10.0.100"` to **BuildSolution**/**TestSolution**.
+2. Run **BuildSolution** with your `/mnt/.../Solution.sln` path, `configuration=Debug` (or Release), and any extra `dotnet` switches via `additionalArguments`.
+3. If you only need tests, call **TestSolution** instead; set `collectTrx=true` to generate TRX logs automatically.
+4. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
+
+### Legacy Visual Studio Build/Test
+1. Use **LegacyMsBuild** for solutions that rely on the full Visual Studio toolset (e.g., net462). Provide `/p` properties via the `properties` parameter (e.g., `Configuration=Debug;Platform=x86`).
+2. If multiple VS installations exist, set `preferredInstance="VisualStudio.17.Release"` (see **ListBuildRunners** output) to pin to a specific build.
+3. After building, call **LegacyVsTest** with the produced test assembly paths. Set `framework=".NETFramework,Version=v4.6.2"` or `platform="x86"` to mirror the original vstest commands.
+4. Failures will include truncated stdout/stderr plus the runner used; consult those logs and rerun after applying fixes.
 
 ### Hotspot / Complexity Sweep
 1. Run **AnalyzeCodeComplexity** with a moderate threshold (e.g., 7).
 2. Sort the output by complexity and cross-reference with `git blame` to see which high-complexity methods churn frequently.
-3. Use the list to propose refactors or add guardrails before touching risky code.
+3. Use the list to propose refactors or add guardrails; re-run after refactoring to confirm the score drops.
 
 ## Safety & Validation
 
