@@ -1,4 +1,4 @@
-# Roslyn Code Navigator
+# Roslyn Code Navigator - MCP Server
 
 **“Unparalleled code exploration and refactoring assistance.”** Point Codex at any Windows solution—C#, VB, hybrid—and instantly search symbols, trace references, inspect dependencies, and surface complexity hotspots with compiler-accurate results.
 
