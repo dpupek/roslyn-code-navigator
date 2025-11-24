@@ -2,7 +2,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -21,7 +21,7 @@
     <!-- Additional utilities -->
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.6" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.6" />
-    <PackageReference Include="System.Text.Json" Version="9.0.6" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.8" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="help.md">
