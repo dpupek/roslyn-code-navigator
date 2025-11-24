@@ -18,7 +18,7 @@ public static class BuildTools
 {
     [McpServerTool, Description("Run 'dotnet build' for a solution or project using the detected Windows SDKs")]
     public static async Task<string> BuildSolution(
-        [Description("Path to solution or project (.sln/.csproj)")] string solutionPath,
+        [Description("Path to solution or project (.sln/.slnf/.csproj)")] string solutionPath,
         [Description("Build configuration (Debug/Release)")] string configuration = "Debug",
         [Description("Optional target framework (e.g., net10.0)")] string? framework = null,
         [Description("Optional runtime identifier (e.g., win-x64)")] string? runtimeIdentifier = null,
@@ -60,7 +60,7 @@ public static class BuildTools
 
     [McpServerTool, Description("Run 'dotnet test' for a solution or project using the detected Windows SDKs")]
     public static async Task<string> TestSolution(
-        [Description("Path to solution or project (.sln/.csproj)")] string solutionPath,
+        [Description("Path to solution or project (.sln/.slnf/.csproj)")] string solutionPath,
         [Description("Test configuration (Debug/Release)")] string configuration = "Debug",
         [Description("Optional target framework (e.g., net10.0)")] string? framework = null,
         [Description("Optional runtime identifier (e.g., win-x64)")] string? runtimeIdentifier = null,
@@ -113,7 +113,7 @@ public static class BuildTools
 
     [McpServerTool, Description("Run Visual Studio MSBuild for legacy .NET Framework solutions/projects")]
     public static async Task<string> LegacyMsBuild(
-        [Description("Path to solution/project (.sln/.csproj)")] string projectOrSolutionPath,
+        [Description("Path to solution/project (.sln/.slnf/.csproj)")] string projectOrSolutionPath,
         [Description("MSBuild targets (semicolon separated)")] string targets = "Rebuild",
         [Description("MSBuild properties in key=value;key=value form")] string properties = "Configuration=Debug;Platform=AnyCPU",
         [Description("Preferred Visual Studio instance name (optional)")] string? preferredInstance = null,

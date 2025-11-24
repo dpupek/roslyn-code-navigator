@@ -18,8 +18,8 @@ namespace RoslynMcpServer.Tools
     {
         [McpServerTool, Description("Search for symbols in C# code using wildcard patterns (* and ?)")]
         public static async Task<string> SearchSymbols(
-            [Description("Wildcard pattern to search for (e.g., 'User*', '*Service', 'Get*User')")] string pattern,
-            [Description("Path to solution file (.sln)")] string solutionPath,
+            [Description("Wildcard pattern to search for (e.g., 'User*', '*Service', 'Get*User')")] string symbolName,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
             [Description("Symbol types to include: class,interface,method,property,field (comma-separated)")] string symbolTypes = "class,interface,method,property",
             [Description("Whether to ignore case in search")] bool ignoreCase = true,
             IServiceProvider? serviceProvider = null,
@@ -39,7 +39,7 @@ namespace RoslynMcpServer.Tools
                 }
                 
                 var normalizedPath = validation.NormalizedPath ?? solutionPath;
-                var sanitizedPattern = validator?.SanitizeSearchPattern(pattern) ?? pattern;
+                var sanitizedPattern = validator?.SanitizeSearchPattern(symbolName) ?? symbolName;
                 
                 // Perform search with timeout
                 using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
@@ -84,7 +84,7 @@ namespace RoslynMcpServer.Tools
         [McpServerTool, Description("Find all references to a specific symbol")]
         public static async Task<string> FindReferences(
             [Description("Exact symbol name to find references for")] string symbolName,
-            [Description("Path to solution file (.sln)")] string solutionPath,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
             [Description("Include symbol definition in results")] bool includeDefinition = true,
             IServiceProvider? serviceProvider = null,
             CancellationToken cancellationToken = default)
@@ -121,10 +121,54 @@ namespace RoslynMcpServer.Tools
             }
         }
 
+        [McpServerTool, Description("Find implementations or derived types for the specified type symbol")]
+        public static async Task<string> FindImplementations(
+            [Description("Interface or base class name (supports wildcards)")] string symbolName,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
+            IServiceProvider? serviceProvider = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var validator = serviceProvider?.GetService<SecurityValidator>();
+                var validation = validator?.ValidateSolutionPath(solutionPath)
+                                ?? SecurityValidator.SolutionValidationResult.Failure("Solution path validation failed.");
+                if (!validation.IsValid)
+                {
+                    return $"Error: {validation.ErrorMessage}";
+                }
+
+                var normalizedPath = validation.NormalizedPath ?? solutionPath;
+                var searchService = serviceProvider?.GetService<SymbolSearchService>();
+                if (searchService == null)
+                {
+                    return "Error: Symbol search service not available.";
+                }
+
+                var results = await searchService.FindImplementationsAsync(symbolName, normalizedPath, cancellationToken).ConfigureAwait(false);
+                if (!results.Any())
+                {
+                    return "No implementations or derived types were found.";
+                }
+
+                return FormatSearchResults(results);
+            }
+            catch (SolutionLoadException ex)
+            {
+                return $"Error: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                var logger = serviceProvider?.GetService<ILogger<CodeNavigationTools>>();
+                logger?.LogError(ex, "Error finding implementations for symbol: {SymbolName}", symbolName);
+                return "Error: An unexpected error occurred while finding implementations.";
+            }
+        }
+
         [McpServerTool, Description("Get detailed information about a specific symbol")]
         public static async Task<string> GetSymbolInfo(
             [Description("Exact symbol name or full qualified name")] string symbolName,
-            [Description("Path to solution file (.sln)")] string solutionPath,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
             IServiceProvider? serviceProvider = null,
             CancellationToken cancellationToken = default)
         {
@@ -162,7 +206,7 @@ namespace RoslynMcpServer.Tools
 
         [McpServerTool, Description("Analyze project dependencies and symbol usage patterns")]
         public static async Task<string> AnalyzeDependencies(
-            [Description("Path to solution file (.sln)")] string solutionPath,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
             [Description("Maximum depth for dependency analysis")] int maxDepth = 3,
             IServiceProvider? serviceProvider = null,
             CancellationToken cancellationToken = default)
@@ -201,7 +245,7 @@ namespace RoslynMcpServer.Tools
 
         [McpServerTool, Description("Analyze code complexity and identify high-complexity methods")]
         public static async Task<string> AnalyzeCodeComplexity(
-            [Description("Path to solution file")] string solutionPath,
+            [Description("Path to solution file (.sln/.slnf)")] string solutionPath,
             [Description("Complexity threshold (1-10)")] int threshold = 5,
             IServiceProvider? serviceProvider = null,
             CancellationToken cancellationToken = default)

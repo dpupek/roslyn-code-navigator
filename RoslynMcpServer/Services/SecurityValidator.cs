@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -48,7 +49,7 @@ namespace RoslynMcpServer.Services
 
         private readonly ILogger<SecurityValidator> _logger;
         private readonly bool _verboseLogging;
-        private readonly HashSet<string> _allowedExtensions = new() { ".sln", ".csproj" };
+        private readonly HashSet<string> _allowedExtensions = new() { ".sln", ".slnf", ".csproj" };
         private readonly Regex _windowsPathPattern = new(@"^[a-zA-Z]:[\\/][^<>:|?*]+$", RegexOptions.Compiled);
         private readonly Regex _unixPathPattern = new(@"^/[^<>:|?*]+$", RegexOptions.Compiled);
         private static readonly Regex ProjectLineRegex = new(@"^\s*Project\("".+?""\)\s*=\s*""(?<name>[^""]+)"",\s*""(?<path>[^""]+)""",
@@ -108,7 +109,7 @@ namespace RoslynMcpServer.Services
                     var extension = Path.GetExtension(workingPath);
                     if (!_allowedExtensions.Contains(extension))
                     {
-                        return Fail($"Only .sln and .csproj files are supported. Received '{extension}'.", workingPath);
+                        return Fail($"Only .sln/.slnf and .csproj files are supported. Received '{extension}'.", workingPath);
                     }
                 }
 
@@ -308,6 +309,65 @@ namespace RoslynMcpServer.Services
 
         private List<ProjectFrameworkInfo> EnumerateProjects(string solutionPath)
         {
+            if (solutionPath.EndsWith(".slnf", StringComparison.OrdinalIgnoreCase))
+            {
+                return EnumerateProjectsFromSolutionFilter(solutionPath);
+            }
+
+            return EnumerateProjectsFromSolutionFile(solutionPath, allowedRelativeProjects: null);
+        }
+
+        private List<ProjectFrameworkInfo> EnumerateProjectsFromSolutionFilter(string filterPath)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(filterPath));
+                if (!document.RootElement.TryGetProperty("solution", out var solutionElement))
+                {
+                    return new List<ProjectFrameworkInfo>();
+                }
+
+                var solutionDir = Path.GetDirectoryName(filterPath) ?? string.Empty;
+                var solutionPath = solutionElement.TryGetProperty("path", out var pathElement)
+                    ? pathElement.GetString()
+                    : null;
+
+                if (string.IsNullOrWhiteSpace(solutionPath))
+                {
+                    return new List<ProjectFrameworkInfo>();
+                }
+
+                var normalizedSolutionPath = Path.GetFullPath(Path.Combine(solutionDir, solutionPath));
+
+                HashSet<string>? projectFilter = null;
+                if (solutionElement.TryGetProperty("projects", out var projectsElement) && projectsElement.ValueKind == JsonValueKind.Array)
+                {
+                    projectFilter = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var project in projectsElement.EnumerateArray())
+                    {
+                        var relative = project.GetString();
+                        if (string.IsNullOrWhiteSpace(relative))
+                        {
+                            continue;
+                        }
+
+                        var normalized = relative.Replace('\\', Path.DirectorySeparatorChar)
+                                                 .Replace('/', Path.DirectorySeparatorChar);
+                        projectFilter.Add(normalized);
+                    }
+                }
+
+                return EnumerateProjectsFromSolutionFile(normalizedSolutionPath, projectFilter);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to inspect solution filter '{SolutionFilter}' for target frameworks. SDK validation skipped.", filterPath);
+                return new List<ProjectFrameworkInfo>();
+            }
+        }
+
+        private List<ProjectFrameworkInfo> EnumerateProjectsFromSolutionFile(string solutionPath, HashSet<string>? allowedRelativeProjects)
+        {
             var projects = new List<ProjectFrameworkInfo>();
             try
             {
@@ -335,6 +395,12 @@ namespace RoslynMcpServer.Services
                     var projectName = match.Groups["name"].Value;
                     var normalizedRelative = relativePath.Replace('\\', Path.DirectorySeparatorChar)
                                                           .Replace('/', Path.DirectorySeparatorChar);
+
+                    if (allowedRelativeProjects != null && !allowedRelativeProjects.Contains(normalizedRelative))
+                    {
+                        continue;
+                    }
+
                     var fullPath = Path.GetFullPath(Path.Combine(solutionDirectory, normalizedRelative));
 
                     if (!File.Exists(fullPath))
