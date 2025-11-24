@@ -39,6 +39,9 @@ project.fragment.lock.json
 
 # Test & coverage outputs
 TestResults/
+artifacts/
+*.trx
+*.binlog
 coverage/
 *.coverage
 *.coveragexml
@@ -489,3 +492,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+bin
+obj
+TestResults
