@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "+lJHp4WZfvs=",
+  "dgSpecHash": "HrwbkhLSTE0=",
   "success": true,
-  "projectFilePath": "E:\\Sandbox\\RoslynMCP\\RoslynMCP\\TestAssets\\SampleSolution\\Sample.App\\Sample.App.csproj",
+  "projectFilePath": "E:\\sandbox\\RoslynMCP\\RoslynMCP\\TestAssets\\SampleSolution\\Sample.App\\Sample.App.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

@@ -1,8 +1,11 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.CodeAnalysis.VisualBasic;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using RoslynMcpServer.Models;
+using System;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using MsSymbolInfo = Microsoft.CodeAnalysis.SymbolInfo;
@@ -16,6 +19,16 @@ namespace RoslynMcpServer.Services
         private readonly ILogger<SymbolSearchService> _logger;
         private readonly IMemoryCache _cache;
         private readonly int _maxParallelProjectOperations;
+        private readonly bool _cacheEnabled;
+        private static readonly HashSet<SymbolKind> CachedSymbolKinds = new()
+        {
+            SymbolKind.NamedType,
+            SymbolKind.Method,
+            SymbolKind.Property,
+            SymbolKind.Field,
+            SymbolKind.Event,
+            SymbolKind.Namespace
+        };
         private static readonly SymbolDisplayFormat QualifiedSymbolFormat = SymbolDisplayFormat.CSharpErrorMessageFormat;
 
         public SymbolSearchService(CodeAnalysisService codeAnalysis, 
@@ -25,6 +38,7 @@ namespace RoslynMcpServer.Services
             _logger = logger;
             _cache = cache;
             _maxParallelProjectOperations = ResolveParallelism();
+            _cacheEnabled = IsCacheEnabled();
         }
 
         public async Task<IEnumerable<SymbolSearchResult>> SearchSymbolsAsync(
@@ -78,16 +92,18 @@ namespace RoslynMcpServer.Services
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var compilation = await project.GetCompilationAsync(cancellationToken);
-                if (compilation == null) return results;
-                
-                var symbols = GetFilteredSymbols(compilation, typeFilter);
-                
-                foreach (var symbol in symbols)
+                var cachedSymbols = await GetProjectSymbolsAsync(project, cancellationToken).ConfigureAwait(false);
+
+                foreach (var symbol in cachedSymbols)
                 {
-                    if (pattern.IsMatch(symbol.Name) || pattern.IsMatch(symbol.ToDisplayString()))
+                    if (!typeFilter.Contains(symbol.SymbolKind))
                     {
-                        results.Add(CreateSearchResult(symbol, project));
+                        continue;
+                    }
+
+                    if (pattern.IsMatch(symbol.Name) || pattern.IsMatch(symbol.FullName ?? string.Empty))
+                    {
+                        results.Add(symbol);
                     }
                 }
             }
@@ -140,8 +156,54 @@ namespace RoslynMcpServer.Services
         private IEnumerable<ISymbol> GetFilteredSymbols(Compilation compilation, HashSet<SymbolKind> typeFilter)
         {
             return GetAllSymbolsRecursive(compilation.GlobalNamespace)
-                .Where(s => typeFilter.Contains(s.Kind));
+                .Where(s => typeFilter.Contains(s.Kind))
+                .Where(HasSourceLocation);
         }
+
+        private async Task<IReadOnlyList<SymbolSearchResult>> GetProjectSymbolsAsync(
+            Project project, CancellationToken cancellationToken)
+        {
+            var version = await project.GetDependentVersionAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!_cacheEnabled)
+            {
+                var uncached = await BuildProjectSymbolCacheAsync(project, version, cancellationToken).ConfigureAwait(false);
+                return uncached.Symbols;
+            }
+
+            var cacheKey = GetProjectCacheKey(project.Id);
+            if (_cache.TryGetValue<ProjectSymbolCache>(cacheKey, out var existing) &&
+                existing != null && existing.Version == version)
+            {
+                return existing.Symbols;
+            }
+
+            var rebuilt = await BuildProjectSymbolCacheAsync(project, version, cancellationToken).ConfigureAwait(false);
+            _cache.Set(cacheKey, rebuilt, new MemoryCacheEntryOptions
+            {
+                SlidingExpiration = TimeSpan.FromMinutes(30)
+            });
+
+            return rebuilt.Symbols;
+        }
+
+        private async Task<ProjectSymbolCache> BuildProjectSymbolCacheAsync(
+            Project project, VersionStamp version, CancellationToken cancellationToken)
+        {
+            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+            if (compilation == null)
+            {
+                return new ProjectSymbolCache(version, Array.Empty<SymbolSearchResult>());
+            }
+
+            var symbols = GetFilteredSymbols(compilation, CachedSymbolKinds)
+                .Select(symbol => CreateSearchResult(symbol, project))
+                .ToList();
+
+            return new ProjectSymbolCache(version, symbols);
+        }
+
+        private static string GetProjectCacheKey(ProjectId projectId) => $"symbol-search:{projectId.Id}";
 
         private IEnumerable<ISymbol> GetAllSymbolsRecursive(INamespaceSymbol namespaceSymbol)
         {
@@ -164,15 +226,23 @@ namespace RoslynMcpServer.Services
             }
         }
 
+        private static bool HasSourceLocation(ISymbol symbol)
+        {
+            return symbol.Locations.Any(location => location.IsInSource);
+        }
+
         private SymbolSearchResult CreateSearchResult(ISymbol symbol, Project project)
         {
             var location = symbol.Locations.FirstOrDefault();
             var lineNumber = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
             
+            var fullName = NormalizeDisplayName(symbol, project);
+            var namespaceName = NormalizeNamespace(symbol, project);
+
             return new SymbolSearchResult
             {
                 Name = symbol.Name,
-                FullName = symbol.ToDisplayString(),
+                FullName = fullName,
                 Category = GetSymbolCategory(symbol),
                 Location = $"{project.Name}:{Path.GetFileName(location?.SourceTree?.FilePath)}:{lineNumber}",
                 ProjectName = project.Name,
@@ -181,7 +251,7 @@ namespace RoslynMcpServer.Services
                 Summary = GetSymbolSummary(symbol),
                 Accessibility = symbol.DeclaredAccessibility.ToString().ToLower(),
                 SymbolKind = symbol.Kind,
-                Namespace = symbol.ContainingNamespace?.ToDisplayString() ?? ""
+                Namespace = namespaceName
             };
         }
 
@@ -261,9 +331,34 @@ namespace RoslynMcpServer.Services
                         if (!includeDefinition && isDefinition)
                             continue;
                         
-                        var reference = await CreateReferenceResultAsync(location, symbol, isDefinition, cancellationToken);
+                        var reference = await CreateReferenceResultAsync(
+                            location.Document,
+                            location.Location,
+                            symbol,
+                            isDefinition,
+                            cancellationToken);
                         if (reference != null)
                             allReferences.Add(reference);
+                    }
+
+                    if (includeDefinition)
+                    {
+                        foreach (var definitionLocation in referencedSymbol.Definition.Locations.Where(l => l.IsInSource))
+                        {
+                            var document = solution.GetDocument(definitionLocation.SourceTree);
+                            if (document == null)
+                                continue;
+
+                            var definitionResult = await CreateReferenceResultAsync(
+                                document,
+                                definitionLocation,
+                                symbol,
+                                isDefinition: true,
+                                cancellationToken);
+
+                            if (definitionResult != null)
+                                allReferences.Add(definitionResult);
+                        }
                     }
                 }
             }
@@ -275,7 +370,68 @@ namespace RoslynMcpServer.Services
                 .ThenBy(r => r.LineNumber);
         }
 
-        private async Task<IEnumerable<ISymbol>> FindSymbolsByQueryAsync(Solution solution, SymbolQuery query, CancellationToken cancellationToken = default)
+        public async Task<IEnumerable<SymbolSearchResult>> FindImplementationsAsync(
+            string symbolName, string solutionPath, CancellationToken cancellationToken = default)
+        {
+            var solution = await _codeAnalysis.GetSolutionAsync(solutionPath, cancellationToken);
+            var query = SymbolQuery.Create(symbolName);
+            var targetSymbols = await FindSymbolsByQueryAsync(solution, query, cancellationToken);
+
+            var implementations = new List<SymbolSearchResult>();
+
+            foreach (var symbol in targetSymbols.OfType<INamedTypeSymbol>())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                IEnumerable<INamedTypeSymbol> matches;
+                if (symbol.TypeKind == TypeKind.Interface)
+                {
+                    var impls = await SymbolFinder.FindImplementationsAsync(symbol, solution, projects: null, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    matches = impls.OfType<INamedTypeSymbol>();
+                }
+                else if (symbol.TypeKind == TypeKind.Class)
+                {
+                    matches = await SymbolFinder.FindDerivedClassesAsync(symbol, solution, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    if (!matches.Any())
+                    {
+                        var derivedInterfaces = await SymbolFinder.FindDerivedInterfacesAsync(symbol, solution, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        matches = derivedInterfaces.OfType<INamedTypeSymbol>();
+                    }
+
+                    if (!matches.Any())
+                    {
+                        var implementationMatches = await SymbolFinder.FindImplementationsAsync(symbol, solution, cancellationToken: cancellationToken).ConfigureAwait(false);
+                        matches = implementationMatches.OfType<INamedTypeSymbol>();
+                    }
+                }
+                else
+                {
+                    continue;
+                }
+
+                foreach (var match in matches)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var project = GetProjectForSymbol(solution, match);
+                    if (project == null)
+                    {
+                        continue;
+                    }
+
+                    implementations.Add(CreateSearchResult(match, project));
+                }
+            }
+
+            return implementations
+                .OrderBy(r => r.ProjectName)
+                .ThenBy(r => r.FullName)
+                .ToList();
+        }
+
+        private async Task<IEnumerable<ISymbol>> FindSymbolsByQueryAsync(
+            Solution solution,
+            SymbolQuery query,
+            CancellationToken cancellationToken = default)
         {
             var symbols = new List<ISymbol>();
             
@@ -286,6 +442,7 @@ namespace RoslynMcpServer.Services
                 if (compilation != null)
                 {
                     var projectSymbols = GetAllSymbolsRecursive(compilation.GlobalNamespace)
+                        .Where(HasSourceLocation)
                         .Where(query.Matches);
                     symbols.AddRange(projectSymbols);
                 }
@@ -295,13 +452,15 @@ namespace RoslynMcpServer.Services
         }
 
         private async Task<ReferenceResult?> CreateReferenceResultAsync(
-            ReferenceLocation location, ISymbol symbol, bool isDefinition, CancellationToken cancellationToken)
+            Document? document,
+            Location location,
+            ISymbol symbol,
+            bool isDefinition,
+            CancellationToken cancellationToken)
         {
-            if (location.Document == null) return null;
-            
-            var document = location.Document;
+            if (document == null) return null;
             var sourceText = await document.GetTextAsync(cancellationToken);
-            var lineSpan = location.Location.GetLineSpan();
+            var lineSpan = location.GetLineSpan();
             
             // Get surrounding context
             var lineNumber = lineSpan.StartLinePosition.Line;
@@ -325,7 +484,7 @@ namespace RoslynMcpServer.Services
                 LineText = line.ToString(),
                 Context = context,
                 IsDefinition = isDefinition,
-                ReferenceKind = DetermineReferenceKind(location.Location, symbol)
+                ReferenceKind = DetermineReferenceKind(location, symbol)
             };
         }
 
@@ -401,6 +560,82 @@ namespace RoslynMcpServer.Services
                 .Replace("\\?", ".");
 
             return new Regex($"^{escaped}$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        }
+
+        private string NormalizeNamespace(ISymbol symbol, Project project)
+        {
+            var namespaceName = symbol.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+            return TrimRootNamespace(project, namespaceName);
+        }
+
+        private string NormalizeDisplayName(ISymbol symbol, Project project)
+        {
+            var displayName = symbol.ToDisplayString();
+            return TrimRootNamespace(project, displayName);
+        }
+
+        private string TrimRootNamespace(Project project, string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            if (!string.Equals(project.Language, LanguageNames.VisualBasic, StringComparison.Ordinal))
+            {
+                return value;
+            }
+
+            if (project.CompilationOptions is VisualBasicCompilationOptions vbOptions)
+            {
+                var root = vbOptions.RootNamespace;
+                if (!string.IsNullOrWhiteSpace(root))
+                {
+                    var prefix = root + ".";
+                    if (value.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        return value.Substring(prefix.Length);
+                    }
+
+                    if (value.Equals(root, StringComparison.Ordinal))
+                    {
+                        return string.Empty;
+                    }
+                }
+            }
+
+            return value;
+        }
+
+        private bool IsCacheEnabled()
+        {
+            var value = Environment.GetEnvironmentVariable("ROSLYN_SEARCH_CACHE");
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "0" => false,
+                "false" => false,
+                "off" => false,
+                _ => true
+            };
+        }
+
+        private sealed record ProjectSymbolCache(VersionStamp Version, IReadOnlyList<SymbolSearchResult> Symbols);
+
+        private static Project? GetProjectForSymbol(Solution solution, ISymbol symbol)
+        {
+            var location = symbol.Locations.FirstOrDefault(loc => loc.IsInSource);
+            if (location?.SourceTree == null)
+            {
+                return null;
+            }
+
+            var document = solution.GetDocument(location.SourceTree);
+            return document?.Project;
         }
 
         private sealed class SymbolQuery

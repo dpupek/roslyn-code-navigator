@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "7NVOhjMg9bo=",
+  "dgSpecHash": "/kp/b2usmpA=",
   "success": true,
-  "projectFilePath": "E:\\Sandbox\\RoslynMCP\\RoslynMCP\\TestAssets\\SampleSolution\\Sample.Legacy\\Sample.Legacy.csproj",
+  "projectFilePath": "E:\\sandbox\\RoslynMCP\\RoslynMCP\\TestAssets\\SampleSolution\\Sample.Legacy\\Sample.Legacy.csproj",
   "expectedPackageFiles": [],
   "logs": []
 }

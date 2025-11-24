@@ -79,6 +79,17 @@ These tests should mock `IServiceProvider` and verify:
 - Timeout handling: Cancel token triggers graceful message.
 - Error path when services aren’t registered (should return user-friendly error).
 
+### Build/Test Runner Tools (`BuildSolution`, `TestSolution`, `LegacyMsBuild`, `LegacyVsTest`)
+
+| Scenario | Assertions |
+| --- | --- |
+| Dotnet SDK build | Invoking `BuildSolution` on `SampleSolution.sln` from WSL launches Windows `dotnet.exe` with translated path, applies `MSBUILDDISABLENODEREUSE=1`, and returns success exit code/log stream. |
+| SDK selection override | Supplying `sdkVersion=9.0.xxx` pins `DOTNET_ROOT`/probing directories to that SDK even if 10.0 is installed; error message clearly states when requested version is missing. |
+| Legacy MSBuild fallback | For a synthetic `.sln` targeting `net462`, tool switches to `MSBuild.exe` under VS 2022 when `PreferredRunner=LegacyMsBuild`; verifies x86 platform props propagate. |
+| VSTest runner | `LegacyVsTest` launches `vstest.console.exe` for a .NET Framework test DLL and surfaces friendly guidance when the executable path lacks permission or the test binary is missing. |
+| Structured logging | Each tool wraps stdout/stderr with timestamps and truncates large logs while surfacing the file path to the full log artifact. |
+| Error messaging | Permission-denied or SDK-missing failures produce the same actionable text described in `agents.md` and `help.md`. |
+
 ## Implementation Notes
 
 - **Test Assets Loading**: Place sample solution under `TestAssets`. Tests copy the solution to a temp directory to avoid path conflicts and ensure SecurityValidator sees absolute paths.

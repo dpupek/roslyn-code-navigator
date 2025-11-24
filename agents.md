@@ -4,10 +4,15 @@
 - Long-running MSBuild loads cause Codex tool timeouts unless cancellation tokens are plumbed end-to-end. Every Roslyn call (`OpenSolutionAsync`, `GetCompilationAsync`, syntax APIs) must honor the request token so agents can fail fast when the CLI cancels a tool after 120 s.
 - Faulted solution loads poison the cache indefinitely. Cache entries must be evicted when `LoadSolutionAsync` throws to avoid permanent failures for a given `.sln`.
 - NuGet fallback folders missing on WSL/Windows are a silent failure mode. Validate the configured fallback directories on startup (before spinning up the MCP server) and exit with a clear log if they are absent.
+- MSBuild nodes left running across sessions lock `RoslynMcpServer.exe`; the server now forces `MSBUILDDISABLENODEREUSE=1` so each build shuts down cleanly. Only override this if you are the sole agent on the machine.
 - Unbounded parallel project fan-out can overwhelm memory/CPU and starve Roslyn, resulting in agent-visible timeouts. Bounded concurrency is essential when a workspace has dozens of compilable projects.
 - Codex CLI does **not** expose `mcp start/stop`. When you need to restart the server (e.g., after a rebuild), stop the running `RoslynMcpServer.exe` process yourself (Task Manager or `Stop-Process`) so builds don’t fail with MSB3026/MSB3021.
 - Prompt quality matters: explicitly mention “use the `roslyn_code_navigator` MCP server” (see README prompt recipes) to prevent Codex from guessing or browsing.
 - Mixed-language scenarios (C# + VB) are now supported and tested; include VB assets/tests whenever reproducing issues to keep parity coverage.
+- MCP server builds run on Windows .NET SDK/MSBuild. When the repo lives under `/mnt/*` in WSL, ensure `$NEXPORT_WINDOTNET` points to `"/mnt/c/Program Files/dotnet/"` and use `"$NEXPORT_WINDOTNET/dotnet.exe"` for `build/test` commands. If you see `Permission denied` launching the Windows binaries, the current Codex session hasn’t granted elevated access—ask the user to update approvals so Windows executables can run.
+- Solution reloads now expose `roslyn_env` + `list_projects`, so always capture those outputs after restarting the MCP server; they shortcut many “it doesn’t load” triages.
+- Embedding MSBuild 10 inside a net8 host caused missing `System.Runtime` types. Upgrading the MCP server target framework to net10 and hooking `AssemblyLoadContext.Resolving` fixed the issue; if you see similar errors, check the runtime first before blaming MSBuild.
+- The .NET 10 SDK ships `NuGet.Frameworks 7.0` in its MSBuild tasks; when tests load projects via MSBuild, the host process must reference the same NuGet.Frameworks version. If you see “manifest definition does not match” errors, update our packages to match the SDK or let MSBuild run out of process (i.e., don’t shadow its dependencies with older versions).
 
 ## Established Patterns
 - **Cancellation-first APIs**: All service/tool entry points accept a `CancellationToken` and pass it to Roslyn, linked CTS, and any custom loops. Throw on token cancellation inside long loops (project enumeration, namespace scans, symbol recursion).

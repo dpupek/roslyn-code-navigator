@@ -9,6 +9,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,6 +87,16 @@ namespace RoslynMcpServer.Services
             {
                 throw;
             }
+            catch (FileNotFoundException ex)
+            {
+                var friendlyMessage = BuildAssemblyLoadFailureMessage(solutionPath, ex);
+                throw new SolutionLoadException(friendlyMessage, ex.FileName, ex);
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                var friendlyMessage = BuildReflectionLoadFailureMessage(solutionPath, ex);
+                throw new SolutionLoadException(friendlyMessage, ex.LoaderExceptions?.FirstOrDefault()?.Message, ex);
+            }
             catch (InvalidOperationException ex)
             {
                 var friendlyMessage = BuildFriendlyLoadFailureMessage(solutionPath, ex.Message);
@@ -93,21 +104,68 @@ namespace RoslynMcpServer.Services
             }
         }
 
+        private static string BuildAssemblyLoadFailureMessage(string solutionPath, FileNotFoundException exception)
+        {
+            var solutionName = Path.GetFileName(solutionPath);
+            var baseMessage = $"MSBuild failed to load {(string.IsNullOrWhiteSpace(solutionName) ? solutionPath : solutionName)} because the .NET runtime assemblies were missing.";
+            var fileName = exception.FileName ?? string.Empty;
+            var lowerFile = fileName.ToLowerInvariant();
+
+            if (lowerFile.Contains("system.runtime") && lowerFile.Contains("version=9.0.0.0"))
+            {
+                return baseMessage + " Install the .NET 9 SDK/targeting pack (e.g., `winget install --id Microsoft.DotNet.SDK.9 --exact --source winget`) on the Windows host, restart RoslynMcpServer, and try again.";
+            }
+
+            return baseMessage + $" Missing assembly: '{exception.FileName}'. Install the required .NET workload/targeting pack and retry.";
+        }
+
+        private static string BuildReflectionLoadFailureMessage(string solutionPath, ReflectionTypeLoadException exception)
+        {
+            var solutionName = Path.GetFileName(solutionPath);
+            var baseMessage = $"MSBuild failed to load {(string.IsNullOrWhiteSpace(solutionName) ? solutionPath : solutionName)} because a referenced .NET assembly could not be loaded.";
+            var loaderException = exception.LoaderExceptions?.FirstOrDefault();
+            if (loaderException is FileNotFoundException fileNotFound)
+            {
+                return BuildAssemblyLoadFailureMessage(solutionPath, fileNotFound);
+            }
+
+            return baseMessage + " Check that the required .NET targeting packs/SDKs are installed and retry.";
+        }
+
         private static string BuildFriendlyLoadFailureMessage(string solutionPath, string diagnosticMessage)
         {
             var solutionName = Path.GetFileName(solutionPath);
             var baseMessage = $"MSBuild failed to load {(string.IsNullOrWhiteSpace(solutionName) ? solutionPath : solutionName)}.";
+            var lowerMessage = diagnosticMessage.ToLowerInvariant();
 
-            if (diagnosticMessage.Contains("was not found", StringComparison.OrdinalIgnoreCase) &&
-                diagnosticMessage.Contains("depends on", StringComparison.OrdinalIgnoreCase))
+            if (lowerMessage.Contains("was not found") &&
+                lowerMessage.Contains("depends on"))
             {
                 return $"{baseMessage} A referenced NuGet package could not be restored ({diagnosticMessage}). " +
                        "Install the missing package or run 'dotnet restore' for the repository, then retry the tool.";
             }
 
-            if (diagnosticMessage.Contains("GetFrameworkPath", StringComparison.OrdinalIgnoreCase))
+            if (lowerMessage.Contains("was restored using") &&
+                lowerMessage.Contains("instead of the project target framework"))
             {
-                return $"{baseMessage} The .NET SDK/targeting pack could not be located. Ensure the required workloads are installed. " +
+                return $"{baseMessage} One of the NuGet packages only provides assemblies for an older framework ({diagnosticMessage}). " +
+                       "Update that package to a version that targets your project's framework or retarget the project.";
+            }
+
+            if (lowerMessage.Contains("project.assets.json") ||
+                lowerMessage.Contains("assets file") ||
+                lowerMessage.Contains("nu110"))
+            {
+                return $"{baseMessage} Required restore assets are missing or out of date. Run 'dotnet restore \"{solutionPath}\"' (or from the repository root) and then rerun the tool. " +
+                       $"MSBuild reported: {diagnosticMessage}";
+            }
+
+            if (lowerMessage.Contains("getsdktoolinginfo") ||
+                lowerMessage.Contains("getframeworkpath") ||
+                (lowerMessage.Contains("the framework") && lowerMessage.Contains("was not found")) ||
+                lowerMessage.Contains("netsdk"))
+            {
+                return $"{baseMessage} The .NET SDK or targeting pack for this framework is not installed. Install the required workload (e.g., 'dotnet workload install windows' for net8.0-windows) or add the targeting pack via Visual Studio Installer. " +
                        $"MSBuild reported: {diagnosticMessage}";
             }
 
@@ -156,6 +214,26 @@ namespace RoslynMcpServer.Services
                 .ToList();
 
             return analysis;
+        }
+
+        public async Task<IReadOnlyList<SolutionProjectInfo>> GetSolutionOverviewAsync(string solutionPath, CancellationToken cancellationToken = default)
+        {
+            var solution = await GetSolutionAsync(solutionPath, cancellationToken).ConfigureAwait(false);
+            var overview = new List<SolutionProjectInfo>(solution.ProjectIds.Count);
+
+            foreach (var project in solution.Projects)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var frameworks = ReadTargetFrameworks(project.FilePath);
+                overview.Add(new SolutionProjectInfo(
+                    project.Name,
+                    project.FilePath ?? string.Empty,
+                    frameworks,
+                    project.AssemblyName,
+                    project.Id.Id.ToString()));
+            }
+
+            return overview;
         }
 
         private void AddProjectDependencies(
@@ -263,6 +341,47 @@ namespace RoslynMcpServer.Services
             }
 
             return references;
+        }
+
+        private static IReadOnlyList<string> ReadTargetFrameworks(string? projectFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            {
+                return Array.Empty<string>();
+            }
+
+            try
+            {
+                var doc = XDocument.Load(projectFilePath);
+                if (doc.Root == null)
+                {
+                    return Array.Empty<string>();
+                }
+
+                var multi = doc
+                    .Descendants()
+                    .FirstOrDefault(node => node.Name.LocalName.Equals("TargetFrameworks", StringComparison.OrdinalIgnoreCase))?.Value;
+                if (!string.IsNullOrWhiteSpace(multi))
+                {
+                    return multi
+                        .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .ToArray();
+                }
+
+                var single = doc
+                    .Descendants()
+                    .FirstOrDefault(node => node.Name.LocalName.Equals("TargetFramework", StringComparison.OrdinalIgnoreCase))?.Value;
+                if (!string.IsNullOrWhiteSpace(single))
+                {
+                    return new[] { single.Trim() };
+                }
+            }
+            catch
+            {
+                // Ignore parse failures and fall back to empty list.
+            }
+
+            return Array.Empty<string>();
         }
 
         private static string GetElementValue(XElement element, string localName)
