@@ -6,13 +6,16 @@
 
 - **"Ctrl-T" for your AI agent**
 - **Wildcard Symbol Search** - Find classes, methods, and properties using pattern matching (`*Service`, `Get*User`, etc.)
-- **Reference Tracking** - Locate all usages of symbols across entire solutions
+- **Reference & Implementation Tracking** - Locate all usages of symbols and map implementations/derived types
 - **Symbol Information** - Get detailed information about types, methods, properties, and more
-- **Dependency Analysis** - Analyze project dependencies and namespace usage patterns
-- **Code Complexity Analysis** - Identify high-complexity methods using cyclomatic complexity metrics
-- **Performance Optimized** - Multi-level caching and incremental analysis for large codebases
-- **Security** - Input validation and path sanitization
+- **Dependency & Complexity Analysis** - Analyze project/package dependencies and flag high-complexity methods
+- **Project & Environment Discovery** - List projects/TFMs and capture runtime/MSBuild inventories
+- **Build & Test Runners** - Run `dotnet build/test` or Visual Studio `MSBuild.exe`/`vstest.console.exe` for legacy solutions
+- **Performance Optimized** - Bounded concurrency, safe caching, and incremental analysis for large codebases
+- **Security & Validation** - Input validation, path sanitization, and proactive NuGet fallback checks
 - **Mixed-language support** - Handles solutions containing both C# and VB.NET projects
+
+**Full tool details** live in `RoslynMcpServer/help.md`; the `ShowHelp` tool returns that file verbatim.
 
 ## Table of Contents
 - [Roslyn Code Navigator](#roslyn-code-navigator)
@@ -31,6 +34,7 @@
   - [Usage](#usage)
   - [Prompt Recipes \& Nudges](#prompt-recipes--nudges)
   - [Available Tools](#available-tools)
+  - [Docs & Help](#docs--help)
   - [Development and Testing](#development-and-testing)
     - [Using MCP Inspector](#using-mcp-inspector)
     - [Building while the server is running](#building-while-the-server-is-running)
@@ -203,10 +207,22 @@ There’s no extra wiring needed on the server; good prompts plus the `ShowHelp`
 
 1. **SearchSymbols** - Search for symbols using wildcard patterns
 2. **FindReferences** - Find all references to a specific symbol
-3. **GetSymbolInfo** - Get detailed information about a symbol
-4. **AnalyzeDependencies** - Analyze project dependencies and usage patterns
-5. **AnalyzeCodeComplexity** - Identify high-complexity methods
-6. **ShowHelp** - Return the built-in help/recipes document
+3. **FindImplementations** - List implementers of an interface or subclasses of a base type
+4. **GetSymbolInfo** - Get detailed information about a symbol
+5. **AnalyzeDependencies** - Analyze project/package dependencies and namespace usage patterns
+6. **AnalyzeCodeComplexity** - Identify high-complexity methods
+7. **ListProjects** - Show projects and their target frameworks in a solution
+8. **RoslynEnv** - Display runtime/MSBuild environment and inventories for troubleshooting
+9. **ListBuildRunners** - Enumerate available dotnet SDKs/runtimes and Visual Studio instances
+10. **BuildSolution** - Run `dotnet build` using detected SDKs/targeting packs
+11. **TestSolution** - Run `dotnet test` with optional TRX logging
+12. **LegacyMsBuild** - Invoke Visual Studio `MSBuild.exe` for .NET Framework solutions/projects
+13. **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies
+14. **ShowHelp** - Return the built-in help/recipes document
+
+## Docs & Help
+
+- Quick reference: run `ShowHelp` or read `RoslynMcpServer/help.md` for the latest tool list, recipes, and environment notes.
 
 ## Development and Testing
 
