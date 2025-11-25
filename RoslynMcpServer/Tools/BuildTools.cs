@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -16,6 +17,17 @@ namespace RoslynMcpServer.Tools;
 [McpServerToolType]
 public static class BuildTools
 {
+    private static readonly ConcurrentDictionary<string, string> TrxIndex = new(StringComparer.OrdinalIgnoreCase);
+
+    public sealed record TestRunResult(
+        bool Succeeded,
+        int ExitCode,
+        string Runner,
+        string StandardOutput,
+        string StandardError,
+        string? TrxPath,
+        string? TrxToken);
+
     [McpServerTool, Description("Run 'dotnet build' for a solution or project using the detected Windows SDKs")]
     public static async Task<string> BuildSolution(
         [Description("Path to solution or project (.sln/.slnf/.csproj)")] string solutionPath,
@@ -59,14 +71,14 @@ public static class BuildTools
     }
 
     [McpServerTool, Description("Run 'dotnet test' for a solution or project using the detected Windows SDKs")]
-    public static async Task<string> TestSolution(
+    public static async Task<TestRunResult> TestSolution(
         [Description("Path to solution or project (.sln/.slnf/.csproj)")] string solutionPath,
         [Description("Test configuration (Debug/Release)")] string configuration = "Debug",
         [Description("Optional target framework (e.g., net10.0)")] string? framework = null,
         [Description("Optional runtime identifier (e.g., win-x64)")] string? runtimeIdentifier = null,
         [Description("Optional output directory override")] string? outputPath = null,
         [Description("Specific dotnet SDK version to use (defaults to latest installed)")] string? sdkVersion = null,
-        [Description("Collect TRX logs (passes --logger:trx)")] bool collectTrx = false,
+        [Description("Collect TRX logs (passes --logger:trx and returns token/path)")] bool collectTrx = false,
         [Description("Additional dotnet command arguments")]
         string[]? additionalArguments = null,
         IServiceProvider? serviceProvider = null,
@@ -75,13 +87,24 @@ public static class BuildTools
         var service = serviceProvider?.GetService<BuildExecutionService>();
         if (service == null)
         {
-            return "Error: Build execution service unavailable.";
+            return new TestRunResult(false, -1, "dotnet", string.Empty, "Build execution service unavailable.", null, null);
         }
 
         var args = new List<string>();
+        string? trxPath = null;
+        string? trxToken = null;
+
         if (collectTrx)
         {
-            args.Add("--logger:trx");
+            var resultsDir = Path.Combine(Path.GetTempPath(), "roslyn-mcp-trx");
+            Directory.CreateDirectory(resultsDir);
+            var fileName = $"test-{Guid.NewGuid():N}.trx";
+            trxPath = Path.Combine(resultsDir, fileName);
+            trxToken = Guid.NewGuid().ToString("N");
+
+            args.Add("--results-directory");
+            args.Add(resultsDir);
+            args.Add($"--logger:trx;LogFileName={fileName}");
         }
         if (additionalArguments != null)
         {
@@ -102,12 +125,61 @@ public static class BuildTools
                 AdditionalArguments: args);
 
             var result = await service.RunDotnetTestAsync(request, cancellationToken).ConfigureAwait(false);
-            return FormatResult(result);
+
+            if (collectTrx && !string.IsNullOrEmpty(trxToken) && !string.IsNullOrEmpty(trxPath))
+            {
+                TrxIndex[trxToken] = trxPath;
+            }
+
+            return new TestRunResult(
+                result.Succeeded,
+                result.ExitCode,
+                result.RunnerDescription,
+                result.StandardOutput,
+                result.StandardError,
+                trxPath,
+                trxToken);
         }
         catch (Exception ex)
         {
             LogError(serviceProvider, ex, "dotnet test failed");
-            return $"Error: {ex.Message} \nTry: increase tool_timeout_sec (e.g., 240s), stop running ASP.NET sessions that may lock binaries, add --no-restore, /p:RunAnalyzers=false, -m:1, or narrow tests with --filter.";
+            return new TestRunResult(
+                false,
+                -1,
+                "dotnet",
+                string.Empty,
+                $"Error: {ex.Message} \nTry: increase tool_timeout_sec (e.g., 240s), stop running ASP.NET sessions that may lock binaries, add --no-restore, /p:RunAnalyzers=false, -m:1, or narrow tests with --filter.",
+                trxPath,
+                trxToken);
+        }
+    }
+
+    [McpServerTool, Description("Return the TRX log content for a previous TestSolution run by token")]
+    public static string GetTestTrx(
+        [Description("Token returned by TestSolution when collectTrx=true")] string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "Error: token is required.";
+        }
+
+        if (!TrxIndex.TryGetValue(token, out var path))
+        {
+            return $"No TRX found for token {token}.";
+        }
+
+        if (!File.Exists(path))
+        {
+            return $"TRX file not found at {path}. It may have been cleaned up.";
+        }
+
+        try
+        {
+            return File.ReadAllText(path);
+        }
+        catch (Exception ex)
+        {
+            return $"Error reading TRX: {ex.Message}";
         }
     }
 
