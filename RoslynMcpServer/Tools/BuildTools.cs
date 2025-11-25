@@ -36,6 +36,7 @@ public static class BuildTools
         [Description("Optional runtime identifier (e.g., win-x64)")] string? runtimeIdentifier = null,
         [Description("Optional output directory override")] string? outputPath = null,
         [Description("Specific dotnet SDK version to use (defaults to latest installed)")] string? sdkVersion = null,
+        [Description("Compile Razor/MVC views (adds RazorCompileOnBuild/MvcBuildViews)")] bool compileViews = false,
         [Description("Additional dotnet command arguments")]
         string[]? additionalArguments = null,
         IServiceProvider? serviceProvider = null,
@@ -58,7 +59,7 @@ public static class BuildTools
                 RuntimeIdentifier: runtimeIdentifier,
                 OutputPath: outputPath,
                 SdkVersion: sdkVersion,
-                AdditionalArguments: NormalizeArgs(additionalArguments));
+                AdditionalArguments: NormalizeArgs(ApplyCompileViews(additionalArguments, compileViews)));
 
             var result = await service.RunDotnetBuildAsync(request, cancellationToken).ConfigureAwait(false);
             return FormatResult(result);
@@ -267,6 +268,24 @@ public static class BuildTools
         return args is null || args.Length == 0
             ? Array.Empty<string>()
             : args.Where(a => !string.IsNullOrWhiteSpace(a)).ToArray();
+    }
+
+    private static string[]? ApplyCompileViews(string[]? args, bool compileViews)
+    {
+        if (!compileViews)
+        {
+            return args;
+        }
+
+        var list = new List<string>();
+        if (args != null)
+        {
+            list.AddRange(args.Where(a => !string.IsNullOrWhiteSpace(a)));
+        }
+
+        list.Add("/p:RazorCompileOnBuild=true");
+        list.Add("/p:MvcBuildViews=true");
+        return list.ToArray();
     }
 
     private static IReadOnlyList<string> ParseList(string value)
