@@ -107,7 +107,7 @@ public static class BuildTools
         catch (Exception ex)
         {
             LogError(serviceProvider, ex, "dotnet test failed");
-            return $"Error: {ex.Message}";
+            return $"Error: {ex.Message} \nTry: increase tool_timeout_sec (e.g., 240s), stop running ASP.NET sessions that may lock binaries, add --no-restore, /p:RunAnalyzers=false, -m:1, or narrow tests with --filter.";
         }
     }
 
