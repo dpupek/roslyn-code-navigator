@@ -63,6 +63,7 @@ namespace RoslynMcpServer
             builder.Services.AddSingleton<RunnerSelector>();
             builder.Services.AddSingleton<Utilities.WindowsProcessLauncher>();
             builder.Services.AddSingleton<BuildExecutionService>();
+            builder.Services.AddSingleton<RunExecutionService>();
             builder.Services.AddMemoryCache();
 
             // Configure MCP server

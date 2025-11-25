@@ -70,19 +70,25 @@ dotnet run
 ```
 Keep the window open until you see `Starting Roslyn MCP Server...`, then press Ctrl+C. This step just confirms MSBuild/SDKs are in good shape.
 
-### 4. Publish a self-contained Windows EXE
-Publishing once keeps startup instant for Codex and avoids restoring packages every time.
+### 4. Publish via the installer script (Windows PowerShell)
+Run the helper script to publish and emit a WSL-friendly TOML snippet:
 ```powershell
-# Example publish to E:\Apps\RoslynMcp
-dotnet publish RoslynMcpServer/RoslynMcpServer.csproj `
-  -c Release `
-  -r win-x64 `
-  -p:SelfContained=true `
-  -p:PublishSingleFile=true `
-  -p:PublishTrimmed=false `
-  -o E:\Apps\RoslynMcp
+pwsh scripts/build-and-publish.ps1
 ```
-Use `-o` (or `--output`) to pick a stable folder. Codex will later point to `E:\Apps\RoslynMcp\RoslynMcpServer.exe`.
+Defaults:
+- Configuration: `Release`
+- Runtime: `win-x64`
+- Output: `%USERPROFILE%\.ros-code-nav` (overwrites if present)
+
+The script prints a TOML block like:
+```toml
+[[servers]]
+name = "roslyn-code-nav"
+command = "/mnt/c/Users/<you>/.ros-code-nav/RoslynMcpServer.exe"
+args = []
+# env = { ROSLYN_LOG_LEVEL = "Debug" }
+```
+Copy that into your MCP client config. If you prefer manual publishing, you can still run `dotnet publish` yourself; just point the TOML `command` at the resulting exe.
 
 ### Configure Codex to launch the EXE
 

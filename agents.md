@@ -13,6 +13,7 @@
 - Solution reloads now expose `roslyn_env` + `list_projects`, so always capture those outputs after restarting the MCP server; they shortcut many “it doesn’t load” triages.
 - Embedding MSBuild 10 inside a net8 host caused missing `System.Runtime` types. Upgrading the MCP server target framework to net10 and hooking `AssemblyLoadContext.Resolving` fixed the issue; if you see similar errors, check the runtime first before blaming MSBuild.
 - The .NET 10 SDK ships `NuGet.Frameworks 7.0` in its MSBuild tasks; when tests load projects via MSBuild, the host process must reference the same NuGet.Frameworks version. If you see “manifest definition does not match” errors, update our packages to match the SDK or let MSBuild run out of process (i.e., don’t shadow its dependencies with older versions).
+- ASP.NET run tool processes are now job-object bound and tracked via per-project markers; on MCP server exit/restart, orphans for that project path are auto-killed. Use the new installer script (`scripts/build-and-publish.ps1`) for consistent publish/TOML output.
 
 ## Established Patterns
 - **Cancellation-first APIs**: All service/tool entry points accept a `CancellationToken` and pass it to Roslyn, linked CTS, and any custom loops. Throw on token cancellation inside long loops (project enumeration, namespace scans, symbol recursion).

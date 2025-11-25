@@ -18,6 +18,12 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 - **TestSolution** - Run `dotnet test` with optional TRX logging via the Windows SDK.
 - **LegacyMsBuild** - Invoke Visual Studio’s `MSBuild.exe` for .NET Framework solutions/projects (x86/x64 aware).
 - **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies using Visual Studio Test tools.
+- **StartAspNet** - Run `dotnet run` for an ASP.NET project with launch-profile selection, returning status + token, PID, URLs, log file (optional), and recent output tail (friendly errors for port-in-use, bad profiles, invalid paths). Child runs are placed in a Windows Job Object so they terminate if the MCP server exits.
+- **StopAspNet** - Stop a running ASP.NET session using the token from `StartAspNet` (returns structured status, handles stale tokens gracefully; configurable timeout).
+- **ListLaunchProfiles** - Read `Properties/launchSettings.json` and return available launch profile names/URLs plus a message when the file is missing or malformed.
+- **ListAspNetSessions** - Show active ASP.NET run sessions (tokens, PIDs, URLs, recent output tail).
+- **ListAspNetRecentSessions** - Show the most recent exited sessions (tokens, exit code, tail).
+- **GetAspNetOutput** - Retrieve recent stdout/stderr/combined tails for a running ASP.NET session (pollable; not full streaming/logging).
 - Mixed-language solutions containing both C# and VB.NET projects are supported; VB symbols and references appear alongside C# ones.
 
 ## Usage Tips
@@ -76,6 +82,32 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 2. Run **BuildSolution** with your `/mnt/.../Solution.sln` path, `configuration=Debug` (or Release), and any extra `dotnet` switches via `additionalArguments`.
 3. If you only need tests, call **TestSolution** instead; set `collectTrx=true` to generate TRX logs automatically.
 4. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
+
+### Start/Stop an ASP.NET Host (with launch profiles)
+1. Call **ListLaunchProfiles** with your `/mnt/.../MyApp.csproj` to see available profiles and their `applicationUrl` values.
+2. Start the app with **StartAspNet**: set `launchProfile` to one from step 1 (optional; defaults to the first) and leave `noBuild=true` (default) for quicker startup. You can override URLs with `urls="http://localhost:5055;https://localhost:7055"`.
+3. The response includes `Succeeded/Message`, `token`, `processId`, `urls`, `runnerDescription`, optional `logFilePath` (when `logToFile=true`), and a `recentOutput` tail. Copy the token.
+4. To stop the host, call **StopAspNet(token, timeoutSeconds=60)**. If you forget the token, use **ListAspNetSessions** to see active sessions (or **ListAspNetRecentSessions** for recently exited ones).
+5. To check live logs, call **GetAspNetOutput(token, maxLines=200)**; it returns stdout, stderr, and combined tails plus a truncation flag. If you need more than the in-memory tail, enable `logToFile=true` on **StartAspNet** or add file logging inside the ASP.NET app and read those logs. Runs are scoped by project path: on MCP server restart, any orphaned runs for that project are auto-killed; child processes are in a Windows Job Object so they terminate if the MCP server dies.
+
+### Run UI smoke tests against the running host (Playwright example)
+Prereqs: Node + Playwright CLI installed locally; app already running via **StartAspNet** and exposing a URL (e.g., https://localhost:7055).
+1. Export the URL: `export APP_URL=https://localhost:7055` (or use the HTTP port).
+2. Run Playwright tests pointing at that URL, e.g. `npx playwright test --grep @smoke --project=chromium --reporter=list --env APP_URL=$APP_URL`.
+3. Need a quick one-off check? Use `npx playwright codegen $APP_URL` to record a script, save it under `tests/ui/` and add an `@smoke` tag.
+4. When finished, stop the host via **StopAspNet(token)** to avoid locked binaries during builds/tests.
+
+### Drive UI checks via the Playwright MCP server
+If you’re using the Playwright MCP server (for example the reference at <https://github.com/playwright-community/playwright-mcp-server>):
+1. Start the ASP.NET host with **StartAspNet** and note the `urls` entry (e.g., https://localhost:7055).
+2. In your MCP client, load the Playwright MCP server and set its base URL to the running app (many clients expose this as a `baseUrl` parameter or environment variable—use the same port from step 1).
+3. Invoke the MCP tool that runs Playwright scripts (commonly `runPlaywright` or `runTests`) and pass the script path plus any env like `APP_URL=https://localhost:7055`.
+4. Use **ListAspNetSessions** to confirm the host is still running while tests execute; stop it with **StopAspNet(token)** afterward to release the binary lock.
+
+### RunOperationResult / output shapes
+- `RunOperationResult`: `Succeeded`, `Message`, optional `ExitCode`, optional `Output` (combined), `Suggestions` (array of hints).
+- `GetAspNetOutput`: returns `RunOutputSnapshot` with `StdOut`, `StdErr`, `Combined`, `Truncated` flag.
+- Tail length defaults to 50 lines; override with env `ROSLYN_ASPNET_TAIL_LINES`. `maxLines` argument on **GetAspNetOutput** lets callers down-sample further.
 
 ### Legacy Visual Studio Build/Test
 1. Use **LegacyMsBuild** for solutions that rely on the full Visual Studio toolset (e.g., net462). Provide `/p` properties via the `properties` parameter (e.g., `Configuration=Debug;Platform=x86`).
