@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Text;
@@ -50,6 +51,7 @@ public static class BuildTools
 
         try
         {
+            var blockerMessage = DetectRunningApp(solutionPath);
             var request = new DotnetCommandRequest(
                 Command: "build",
                 TargetPath: solutionPath,
@@ -62,7 +64,12 @@ public static class BuildTools
                 AdditionalArguments: NormalizeArgs(ApplyCompileViews(additionalArguments, compileViews)));
 
             var result = await service.RunDotnetBuildAsync(request, cancellationToken).ConfigureAwait(false);
-            return FormatResult(result);
+            var formatted = FormatResult(result);
+            if (!string.IsNullOrEmpty(blockerMessage))
+            {
+                formatted += "\n\nWarning: " + blockerMessage;
+            }
+            return formatted;
         }
         catch (Exception ex)
         {
@@ -364,5 +371,25 @@ public static class BuildTools
     {
         var factory = serviceProvider?.GetService<ILoggerFactory>();
         factory?.CreateLogger("BuildTools").LogError(exception, message);
+    }
+
+    private static string? DetectRunningApp(string solutionPath)
+    {
+        try
+        {
+            var name = Path.GetFileNameWithoutExtension(solutionPath);
+            var processes = Process.GetProcessesByName(name);
+            if (processes.Length == 0)
+            {
+                return null;
+            }
+
+            var pids = string.Join(", ", processes.Select(p => p.Id));
+            return $"Detected running process(es) named '{name}' (PID(s): {pids}). They may lock build outputs; stop them or use StopAspNet if they were started via StartAspNet.";
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
