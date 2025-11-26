@@ -110,6 +110,11 @@ command = "/mnt/c/Users/<you>/.ros-code-nav/RoslynMcpServer.exe"
 # Optional overrides
 startup_timeout_sec = 30
 tool_timeout_sec = 120
+
+# If your solution relies on COM references or legacy project types, you can point
+# LegacyMsBuild at a specific MSBuild.exe via `preferredInstance`, e.g.
+# C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe.
+# The server will also auto-probe common VS 2019/2022 locations.
 ```
 Copy that into your Codex MCP config (or adapt it for Claude Desktop). If you prefer manual publishing, you can still run `dotnet publish` yourself; just point the TOML `command` at the resulting exe.
 
