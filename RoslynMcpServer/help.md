@@ -15,7 +15,7 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 - **RoslynEnv** - Display the server’s runtime/MSBuild environment plus dotnet/Visual Studio inventories for troubleshooting build/load issues.
 - **ListBuildRunners** - Return the structured list of dotnet SDKs, runtimes, Visual Studio instances, and shared runtime probe paths detected at startup.
 - **BuildSolution** - Run `dotnet build` using the Windows SDK/targeting packs detected by the server.
-- **TestSolution** - Run `dotnet test` with optional TRX logging via the Windows SDK.
+- **TestSolution** - Run `dotnet test` with optional TRX logging via the Windows SDK (returns TRX token/path when `collectTrx=true`).
 - **LegacyMsBuild** - Invoke Visual Studio’s `MSBuild.exe` for .NET Framework solutions/projects (x86/x64 aware).
 - **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies using Visual Studio Test tools.
 - **StartAspNet** - Run `dotnet run` for an ASP.NET project with launch-profile selection, returning status + token, PID, URLs, log file (optional), and recent output tail (friendly errors for port-in-use, bad profiles, invalid paths). Child runs are placed in a Windows Job Object so they terminate if the MCP server exits.
@@ -79,7 +79,7 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 
 ### Build from WSL Using dotnet
 1. Call **ListBuildRunners** to confirm the desired dotnet SDK version is installed (e.g., 10.0.100). If you need a specific SDK, pass `sdkVersion="10.0.100"` to **BuildSolution**/**TestSolution**.
-2. Run **BuildSolution** with your `/mnt/.../Solution.sln` path, `configuration=Debug` (or Release), and any extra `dotnet` switches via `additionalArguments`.
+2. Run **BuildSolution** with your `/mnt/.../Solution.sln` path, `configuration=Debug` (or Release), and any extra `dotnet` switches via `additionalArguments`. Set `compileViews=true` to force Razor/MVC view compilation at build time.
 3. If you only need tests, call **TestSolution** instead; set `collectTrx=true` to generate TRX logs automatically.
 4. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
 
