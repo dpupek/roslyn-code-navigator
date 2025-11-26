@@ -48,6 +48,20 @@ public sealed class RunnerSelector
 
     public RunnerSelection SelectMsbuildRunner(string? preferredInstance)
     {
+        if (_environmentInfo.Toolchain.VisualStudioInstallations.Count == 0)
+        {
+            var fallback = FindDefaultMsbuildPath();
+            if (fallback != null)
+            {
+                var translatedPath = TranslateExecutable(fallback);
+                var env = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["MSBUILDDISABLENODEREUSE"] = "1",
+                };
+                return new RunnerSelection("msbuild", translatedPath, null, env, "MSBuild (fallback)");
+            }
+        }
+
         var instance = ResolveVisualStudioInstance(preferredInstance, requireMsbuildPath: true, "MSBuild");
         var executable = instance.MsbuildPath!;
         var translated = TranslateExecutable(executable);
@@ -77,6 +91,35 @@ public sealed class RunnerSelector
         };
 
         return new RunnerSelection("vstest", translated, null, environment, $"vstest.console ({instance.Name} {instance.Version})");
+    }
+
+    private string? FindDefaultMsbuildPath()
+    {
+        if (!_isWindowsHost)
+        {
+            return null;
+        }
+
+        var candidates = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2022", "Professional", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2022", "Enterprise", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2022", "Community", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2022", "BuildTools", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2019", "Professional", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2019", "Community", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft Visual Studio", "2019", "BuildTools", "MSBuild", "Current", "Bin", "MSBuild.exe"),
+        };
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        return null;
     }
 
     private static Version ParseVersionOrDefault(string versionText)

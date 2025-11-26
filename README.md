@@ -1,6 +1,8 @@
 # Roslyn Code Navigator - MCP Server
 
-**“Unparalleled code exploration and refactoring assistance.”** Point Codex at any Windows solution—C#, VB, hybrid—and instantly search symbols, trace references, inspect dependencies, and surface complexity hotspots with compiler-accurate results.
+**"Unparalleled code exploration and refactoring assistance."** Point Codex at any Windows solution-C#, VB, hybrid-and instantly search symbols, trace references, inspect dependencies, and surface complexity hotspots with compiler-accurate results.
+
+Use this server when you need compiler-accurate, MSBuild-aware analysis of medium-to-large .NET solutions (including mixed C#/VB and legacy .NET Framework) directly from your MCP-compatible client.
 
 ## Features
 
@@ -18,16 +20,17 @@
 **Full tool details** live in `RoslynMcpServer/help.md`; the `ShowHelp` tool returns that file verbatim.
 
 ## Table of Contents
-- [Roslyn Code Navigator](#roslyn-code-navigator)
+- [Roslyn Code Navigator - MCP Server](#roslyn-code-navigator---mcp-server)
   - [Features](#features)
   - [Table of Contents](#table-of-contents)
   - [Prerequisites](#prerequisites)
+  - [Quickstart (Codex CLI)](#quickstart-codex-cli)
   - [Setup (Zero-to-Ready Guide)](#setup-zero-to-ready-guide)
     - [1. Download the sources](#1-download-the-sources)
     - [2. Restore \& build once](#2-restore--build-once)
     - [3. Optional: local smoke test](#3-optional-local-smoke-test)
     - [4. Publish a self-contained Windows EXE](#4-publish-a-self-contained-windows-exe)
-    - [Configure Codex to launch the EXE](#configure-codex-to-launch-the-exe)
+    - [Configure Codex CLI](#configure-codex-cli)
     - [Logging, NuGet \& environment notes](#logging-nuget--environment-notes)
     - [Paths and solution visibility](#paths-and-solution-visibility)
     - [Verify the connection](#verify-the-connection)
@@ -44,9 +47,26 @@
   - [Contributing](#contributing)
 ## Prerequisites
 
-- .NET 8.0 SDK or later
+- .NET 10.0 SDK (host runtime for `RoslynMcpServer`)
 - Visual Studio 2022 or VS Code (recommended for development)
-- Claude Desktop application
+- An MCP-compatible client (e.g., Codex CLI, Claude Desktop)
+
+## Quickstart (Codex CLI)
+
+1. Clone and publish the server:
+   ```powershell
+   git clone https://github.com/carquiza/RoslynMCP.git
+   cd RoslynMCP
+   pwsh scripts/build-and-publish.ps1
+   ```
+2. Copy the printed `[mcp_servers.roslyn_code_navigator]` TOML block into your `~/.codex/config.toml`.
+3. Restart Codex CLI so it picks up the new server.
+4. Verify the connection:
+   ```powershell
+   codex mcp tools roslyn_code_navigator list
+   codex mcp call roslyn_code_navigator ShowHelp
+   ```
+5. Start chatting and use the prompt recipes below to drive symbol search, dependency analysis, and build/test runs via `roslyn_code_navigator`.
 
 ## Setup (Zero-to-Ready Guide)
 
@@ -82,43 +102,40 @@ Defaults:
 
 The script prints a TOML block like:
 ```toml
-[[servers]]
-name = "roslyn-code-nav"
+[mcp_servers.roslyn_code_navigator]
+name = "Roslyn Code Navigator"
 command = "/mnt/c/Users/<you>/.ros-code-nav/RoslynMcpServer.exe"
-args = []
-# env = { ROSLYN_LOG_LEVEL = "Debug" }
+# OPTIONAL LOGGING
+# env = { ROSLYN_LOG_LEVEL = "Debug", ROSLYN_VERBOSE_SECURITY_LOGS = "true" }
+# Optional overrides
+startup_timeout_sec = 30
+tool_timeout_sec = 120
 ```
-Copy that into your MCP client config. If you prefer manual publishing, you can still run `dotnet publish` yourself; just point the TOML `command` at the resulting exe.
+Copy that into your Codex MCP config (or adapt it for Claude Desktop). If you prefer manual publishing, you can still run `dotnet publish` yourself; just point the TOML `command` at the resulting exe.
 
-### Configure Codex to launch the EXE
+### Configure Codex CLI
 
 Codex expects MCP servers to be listed under `[mcp_servers]` in `~/.codex/config.toml` (see the [Codex config docs](https://github.com/openai/codex/blob/main/docs/config.md#mcp-integration)). Add or update an entry similar to the one below, substituting your local paths from the publish step:
 
 ```toml
 [mcp_servers.roslyn_code_navigator]
-# Option A: Launch Windows dotnet (recommended if your solution relies on VS/Windows NuGet fallbacks)
 command = "/mnt/e/Apps/RoslynMcp/RoslynMcpServer.exe"
-args = []
-
-# Line Breaks are not allowed in the env property
-env = { DOTNET_ENVIRONMENT = "Production", LOG_LEVEL = "Information", ROSLYN_LOG_LEVEL = "Debug", ROSLYN_VERBOSE_SECURITY_LOGS = "false", ROSLYN_MAX_PROJECT_CONCURRENCY = "4" }
-# Optional overrides
-startup_timeout_sec = 30
-tool_timeout_sec = 120
 ```
 
-The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_navigator` (or automatically when a tool request requires it) and communicate over stdio.
+The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_navigator` (or automatically when a tool request requires it) and communicate over stdio. You can further customize behavior with environment variables and timeouts; see the logging and environment notes below.
 
 ### Logging, NuGet & environment notes
 
 - `ROSLYN_LOG_LEVEL` overrides the console log threshold used by the server (falls back to `LOG_LEVEL` if not set). Valid values match `Microsoft.Extensions.Logging.LogLevel` (`Trace`, `Debug`, `Information`, etc.).
 - `ROSLYN_VERBOSE_SECURITY_LOGS` enables detailed reasoning when solution-path validation fails, which is useful when agents surface `Invalid solution path provided.`. Set it to `true` to emit warnings with the exact failure reason.
-- NuGet fallbacks are validated at startup. If required fallback folders don’t exist, the server logs a clear error and exits immediately rather than hanging during MSBuild package resolution. You can override/define:
+- NuGet fallbacks are validated at startup. If required fallback folders don't exist, the server logs a clear error and exits immediately rather than hanging during MSBuild package resolution. You can override/define:
   - `NUGET_PACKAGES` (defaults to `~/.nuget/packages` if unset)
   - `NUGET_FALLBACK_PACKAGES` and/or `RestoreAdditionalProjectFallbackFolders` (on Windows defaults to `C:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages`; on WSL we translate that path when present).
 - If your Codex CLI runs under WSL but your repo depends on Windows-only NuGet fallback folders, point the MCP config at the Windows `dotnet.exe` and pass a Windows-style project path (as shown above). Codex will still proxy the stdio bridge across WSL, but MSBuild runs in Windows, so restore/build steps succeed.
 - Concurrency: `ROSLYN_MAX_PROJECT_CONCURRENCY` controls the number of projects compiled in parallel during symbol searches to reduce memory pressure on large solutions.
 - Timeouts and cancellation: MCP tool calls time out by default after `tool_timeout_sec` (e.g., 120s). All tools propagate cancellation tokens and will stop work promptly when the client cancels.
+- WSL/Windows bridging: if your repo lives under `/mnt/*` in WSL but you want to force Windows `dotnet.exe`, set `NEXPORT_WINDOTNET` to the Windows .NET SDK root (for example, `"/mnt/c/Program Files/dotnet/"`); the publish script and server will honor it.
+- MSBuild node reuse: the server disables node reuse (`MSBUILDDISABLENODEREUSE=1`) so server-run builds shut down cleanly. Avoid overriding this unless you fully control the machine.
 
 | env key | What it does |
 | --- | --- |
@@ -142,7 +159,11 @@ The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_naviga
 
 ## Usage
 
-Once configured, restart Codex (or the CLI) so it picks up the new MCP entry. When the assistant needs code analysis, it will spin up the server automatically. Here are a few friendly prompts you can paste into chat:
+Once configured, restart Codex (or the CLI) so it picks up the new MCP entry. When the assistant needs code analysis, it will spin up the server automatically.
+
+> Recommended first step: call the `ShowHelp` tool from `roslyn_code_navigator` (or read `RoslynMcpServer/help.md`) so the assistant knows what tools and recipes are available.
+
+Here are a few friendly prompts you can paste into chat:
 
 1. **Search for symbols**
    ```
@@ -171,6 +192,12 @@ Once configured, restart Codex (or the CLI) so it picks up the new MCP entry. Wh
    ```
 
 Each of these examples mentions the `roslyn_code_navigator` server explicitly, which nudges Codex to use it instead of guessing or browsing. Feel free to adapt the wording to your scenario.
+
+Example end-to-end workflow (investigate a slow API controller):
+
+1. Use `SearchSymbols` via `roslyn_code_navigator` to find `*Controller` classes in your solution.
+2. Run `AnalyzeCodeComplexity` on the same solution (with a threshold like `7`) to flag hotspots.
+3. For the most complex controller actions, call `FindReferences` to see where they are used and how they are composed across your codebase.
 
 ## Prompt Recipes & Nudges
 
