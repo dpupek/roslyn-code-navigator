@@ -195,6 +195,17 @@ public sealed class RunnerSelector
 
     private VisualStudioInstallationInfo ResolveVisualStudioInstance(string? preferredInstance, bool requireMsbuildPath, string runnerName)
     {
+        // Allow full path to MSBuild.exe as "preferredInstance"
+        if (!string.IsNullOrWhiteSpace(preferredInstance) && File.Exists(preferredInstance))
+        {
+            return new VisualStudioInstallationInfo(
+                Name: Path.GetFileName(preferredInstance),
+                Version: "path",
+                DiscoveryType: "Manual",
+                InstallationPath: Path.GetDirectoryName(preferredInstance) ?? string.Empty,
+                MsbuildPath: preferredInstance);
+        }
+
         var installations = _environmentInfo.Toolchain.VisualStudioInstallations;
         if (installations.Count == 0)
         {
