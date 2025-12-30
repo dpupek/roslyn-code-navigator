@@ -21,6 +21,12 @@ jobs:
         run: dotnet pack RoslynMcpServer/RoslynMcpServer.csproj -c Release
 
       - name: Push to nuget.org
-        run: dotnet nuget push RoslynMcpServer/bin/Release/*.nupkg --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem -Path "RoslynMcpServer/bin/Release" -Filter "*.nupkg"
+          if (-not $packages) { throw "No nupkg found under RoslynMcpServer/bin/Release" }
+          foreach ($pkg in $packages) {
+            dotnet nuget push $pkg.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+          }
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
