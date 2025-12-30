@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Scratch work
+.scratch/
+
 # Visual Studio working files
 .vs/
 *.user

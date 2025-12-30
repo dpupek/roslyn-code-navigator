@@ -14,6 +14,8 @@
 - Embedding MSBuild 10 inside a net8 host caused missing `System.Runtime` types. Upgrading the MCP server target framework to net10 and hooking `AssemblyLoadContext.Resolving` fixed the issue; if you see similar errors, check the runtime first before blaming MSBuild.
 - The .NET 10 SDK ships `NuGet.Frameworks 7.0` in its MSBuild tasks; when tests load projects via MSBuild, the host process must reference the same NuGet.Frameworks version. If you see “manifest definition does not match” errors, update our packages to match the SDK or let MSBuild run out of process (i.e., don’t shadow its dependencies with older versions).
 - ASP.NET run tool processes are now job-object bound and tracked via per-project markers; on MCP server exit/restart, orphans for that project path are auto-killed. Use the new installer script (`scripts/build-and-publish.ps1`) for consistent publish/TOML output.
+- Fake dotnet scripts in tests need a processFactory override; otherwise Windows will try to execute `dotnet.exe` directly and fail. Use a `.cmd` wrapper on Windows and inject a custom process factory in tests.
+- When running Windows dotnet from WSL, force non-interactive env (`TERM=dumb`, `NO_COLOR=1`) to reduce terminal/pty quirks during background runs.
 
 ## Established Patterns
 - **Cancellation-first APIs**: All service/tool entry points accept a `CancellationToken` and pass it to Roslyn, linked CTS, and any custom loops. Throw on token cancellation inside long loops (project enumeration, namespace scans, symbol recursion).
@@ -24,6 +26,13 @@
 - **PowerShell-first setup**: All documented setup/publish snippets assume Windows PowerShell. When guiding users, keep commands in that shell and remind them to publish with `-o` so Codex can target a stable exe path.
 - **Test harness**: Extend `RoslynMcpServer.Tests` + `TestAssets/SampleSolution` (now includes C# + VB projects) for new regressions instead of crafting ad-hoc samples.
 - **ShowHelp tool**: Encourage agents to run the `ShowHelp` MCP tool during sessions to refresh recipes/capabilities quickly.
+
+## Quick Memory Usage
+- **Project selection**: Use the `ros-code` endpoint for this repo. Prefer `listProjects` if you need to confirm.
+- **Common flow**: `listRecentEntries { endpoint: "ros-code", maxResults: 20 }` at session start, `searchEntries` before `upsertEntry` to avoid duplicates.
+- **Epic linkage**: For build runner work, use `epicSlug: "build-runner-tools"` and reference the epic docs under `docs/build-runner-tools-0000/`.
+- **What to record**: Build/test recipes, runner selection decisions, permission/SDK troubleshooting, and test coverage deltas.
+- **Security**: Keep entries non-permanent unless explicitly requested; never store credentials.
 
 
 ## Decomposition & Shaping

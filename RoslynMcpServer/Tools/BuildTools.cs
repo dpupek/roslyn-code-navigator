@@ -162,9 +162,101 @@ public static class BuildTools
         }
     }
 
+    [McpServerTool, Description("Start 'dotnet test' asynchronously and return a run id")]
+    public static TestRunStartResult StartTest(
+        [Description("Path to solution or project (.sln/.slnf/.csproj)")] string solutionPath,
+        [Description("Test configuration (Debug/Release)")] string configuration = "Debug",
+        [Description("Optional target framework (e.g., net10.0)")] string? framework = null,
+        [Description("Optional runtime identifier (e.g., win-x64)")] string? runtimeIdentifier = null,
+        [Description("Optional output directory override")] string? outputPath = null,
+        [Description("Specific dotnet SDK version to use (defaults to latest installed)")] string? sdkVersion = null,
+        [Description("Collect TRX logs (passes --logger:trx and returns token/path)")] bool collectTrx = false,
+        [Description("Directory to store full logs (defaults to temp)")] string? logDirectory = null,
+        [Description("Additional dotnet command arguments")]
+        string[]? additionalArguments = null,
+        IServiceProvider? serviceProvider = null,
+        CancellationToken cancellationToken = default)
+    {
+        var service = serviceProvider?.GetService<TestRunExecutionService>();
+        if (service == null)
+        {
+            return new TestRunStartResult(false, "Error: Test run service unavailable.");
+        }
+
+        try
+        {
+            var request = new DotnetCommandRequest(
+                Command: "test",
+                TargetPath: solutionPath,
+                WorkingDirectory: null,
+                Configuration: configuration,
+                Framework: framework,
+                RuntimeIdentifier: runtimeIdentifier,
+                OutputPath: outputPath,
+                SdkVersion: sdkVersion,
+                AdditionalArguments: NormalizeArgs(additionalArguments));
+
+            var result = service.StartAsync(request, collectTrx, logDirectory, cancellationToken);
+            if (result.Succeeded && !string.IsNullOrWhiteSpace(result.TrxToken) && !string.IsNullOrWhiteSpace(result.TrxPath))
+            {
+                TrxIndex[result.TrxToken!] = result.TrxPath!;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            LogError(serviceProvider, ex, "dotnet test start failed");
+            return new TestRunStartResult(false, $"Error: {ex.Message}");
+        }
+    }
+
+    [McpServerTool, Description("Get the status of an async test run by id")]
+    public static TestRunStatusResult GetTestStatus(
+        [Description("Run id returned by StartTest")] string runId,
+        IServiceProvider? serviceProvider = null)
+    {
+        var service = serviceProvider?.GetService<TestRunExecutionService>();
+        if (service == null)
+        {
+            return new TestRunStatusResult(false, "Error: Test run service unavailable.");
+        }
+
+        return service.GetStatus(runId);
+    }
+
+    [McpServerTool, Description("Cancel a running async test run by id")]
+    public static TestRunStatusResult CancelTestRun(
+        [Description("Run id returned by StartTest")] string runId,
+        IServiceProvider? serviceProvider = null)
+    {
+        var service = serviceProvider?.GetService<TestRunExecutionService>();
+        if (service == null)
+        {
+            return new TestRunStatusResult(false, "Error: Test run service unavailable.");
+        }
+
+        return service.Cancel(runId);
+    }
+
+    [McpServerTool, Description("List async test runs started via StartTest")]
+    public static TestRunListResult ListTestRuns(
+        [Description("Include recently completed runs")] bool includeCompleted = false,
+        [Description("Maximum number of runs to return")] int maxResults = 20,
+        IServiceProvider? serviceProvider = null)
+    {
+        var service = serviceProvider?.GetService<TestRunExecutionService>();
+        if (service == null)
+        {
+            return new TestRunListResult(Array.Empty<TestRunStatus>());
+        }
+
+        return service.ListRuns(includeCompleted, maxResults);
+    }
+
     [McpServerTool, Description("Return the TRX log content for a previous TestSolution run by token")]
     public static string GetTestTrx(
-        [Description("Token returned by TestSolution when collectTrx=true")] string token)
+        [Description("Token returned by TestSolution or StartTest when collectTrx=true")] string token)
     {
         if (string.IsNullOrWhiteSpace(token))
         {

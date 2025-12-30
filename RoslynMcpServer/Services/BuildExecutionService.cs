@@ -65,7 +65,7 @@ public sealed class BuildExecutionService
             runner.ExecutablePath,
             arguments,
             workingDirectory,
-            runner.EnvironmentOverrides,
+            ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
         return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
@@ -110,7 +110,7 @@ public sealed class BuildExecutionService
             runner.ExecutablePath,
             arguments,
             workingDirectory,
-            runner.EnvironmentOverrides,
+            ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
         return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
@@ -169,7 +169,7 @@ public sealed class BuildExecutionService
             runner.ExecutablePath,
             arguments,
             workingDirectory,
-            runner.EnvironmentOverrides,
+            ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
         return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
@@ -242,5 +242,12 @@ public sealed class BuildExecutionService
 
         _logger.LogWarning("Could not translate '{Path}' to a Windows path. Falling back to original path.", hostPath);
         return hostPath;
+    }
+
+    private static IReadOnlyDictionary<string, string?> ApplyNonInteractiveOverrides(IReadOnlyDictionary<string, string?> baseOverrides)
+    {
+        var combined = new Dictionary<string, string?>(baseOverrides, StringComparer.OrdinalIgnoreCase);
+        NonInteractiveEnvironment.Apply(combined);
+        return combined;
     }
 }

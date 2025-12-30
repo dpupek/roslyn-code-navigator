@@ -140,6 +140,7 @@ The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_naviga
 - Concurrency: `ROSLYN_MAX_PROJECT_CONCURRENCY` controls the number of projects compiled in parallel during symbol searches to reduce memory pressure on large solutions.
 - Timeouts and cancellation: MCP tool calls time out by default after `tool_timeout_sec` (e.g., 120s). All tools propagate cancellation tokens and will stop work promptly when the client cancels.
 - WSL/Windows bridging: if your repo lives under `/mnt/*` in WSL but you want to force Windows `dotnet.exe`, set `NEXPORT_WINDOTNET` to the Windows .NET SDK root (for example, `"/mnt/c/Program Files/dotnet/"`); the publish script and server will honor it.
+- Background runs: set `TERM=dumb`, `NO_COLOR=1`, and `CLICOLOR=0` in the server environment to reduce terminal/pty quirks when invoking Windows toolchains from WSL.
 - MSBuild node reuse: the server disables node reuse (`MSBUILDDISABLENODEREUSE=1`) so server-run builds shut down cleanly. Avoid overriding this unless you fully control the machine.
 
 | env key | What it does |
@@ -149,6 +150,7 @@ The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_naviga
 | `ROSLYN_LOG_LEVEL` | Lets you crank Roslyn-specific logs higher/lower than the base level. |
 | `ROSLYN_VERBOSE_SECURITY_LOGS` | When `true`, prints the exact reason a solution path was rejected (missing SDK, invalid path, etc.). |
 | `ROSLYN_MAX_PROJECT_CONCURRENCY` | Caps concurrent project compilations; lower values reduce memory usage on huge solutions. |
+| `TERM`, `NO_COLOR`, `CLICOLOR` | Force non-interactive output to avoid terminal/PTY issues during background runs. |
 
 ### Paths and solution visibility
 - When launching with Windows `dotnet.exe`, prefer Windows-style paths in args and tool inputs (e.g., `E:\\...\\Solution.sln`).
@@ -254,15 +256,45 @@ There’s no extra wiring needed on the server; good prompts plus the `ShowHelp`
 9. **ListBuildRunners** - Enumerate available dotnet SDKs/runtimes and Visual Studio instances
 10. **BuildSolution** - Run `dotnet build` using detected SDKs/targeting packs
 11. **TestSolution** - Run `dotnet test` with optional TRX logging
-12. **LegacyMsBuild** - Invoke Visual Studio `MSBuild.exe` for .NET Framework solutions/projects
-13. **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies
-14. **ShowHelp** - Return the built-in help/recipes document
+12. **StartTest** - Start `dotnet test` asynchronously (returns run id + log paths)
+13. **GetTestStatus** - Poll async test run status (state/exit code/log tails)
+14. **CancelTestRun** - Cancel a running async test run
+15. **ListTestRuns** - List active (and optionally recent) async test runs
+16. **LegacyMsBuild** - Invoke Visual Studio `MSBuild.exe` for .NET Framework solutions/projects
+17. **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies
+18. **ShowHelp** - Return the built-in help/recipes document
 
 ## Docs & Help
 
 - Quick reference: run `ShowHelp` or read `RoslynMcpServer/help.md` for the latest tool list, recipes, and environment notes.
+- Full recipe coverage lives in `RoslynMcpServer/help.md`.
 
 ## Development and Testing
+
+### Automated NuGet publishing
+This repo publishes the .NET tool to nuget.org on tags matching `vX.Y.Z` via GitHub Actions. Create a tag and push it, and the workflow will pack and push:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+Make sure the repo has a `NUGET_API_KEY` secret configured with push permissions.
+
+### Running tests from WSL (Windows dotnet)
+Use the Windows `dotnet.exe` when the repo lives under `/mnt/*`:
+
+```bash
+"/mnt/c/Program Files/dotnet/dotnet.exe" test RoslynMCP.sln -v minimal --no-restore --logger "trx;LogFileName=artifacts/logs/tests.trx"
+```
+
+The TRX output ends up under `RoslynMcpServer.Tests/TestResults/artifacts/logs/tests.trx` (VSTest relocates it).
+
+If the test run exits non-zero without visible errors, add diagnostics:
+
+```bash
+"/mnt/c/Program Files/dotnet/dotnet.exe" test RoslynMcpServer.Tests/RoslynMcpServer.Tests.csproj --no-restore -v minimal --logger "trx;LogFileName=artifacts/logs/tests.trx" --diag artifacts/logs/vstest.diag.log
+```
 
 ### Using MCP Inspector
 

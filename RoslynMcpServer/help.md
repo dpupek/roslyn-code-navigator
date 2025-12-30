@@ -16,6 +16,10 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 - **ListBuildRunners** - Return the structured list of dotnet SDKs, runtimes, Visual Studio instances, and shared runtime probe paths detected at startup.
 - **BuildSolution** - Run `dotnet build` using the Windows SDK/targeting packs detected by the server.
 - **TestSolution** - Run `dotnet test` with optional TRX logging via the Windows SDK (returns TRX token/path when `collectTrx=true`).
+- **StartTest** - Start `dotnet test` asynchronously and return a run id plus log/TRX paths when enabled.
+- **GetTestStatus** - Poll the status of an async test run (state, exit code, log tails).
+- **CancelTestRun** - Cancel an async test run by id.
+- **ListTestRuns** - List active (and optional recently completed) async test runs.
 - **LegacyMsBuild** - Invoke Visual Studio’s `MSBuild.exe` for .NET Framework solutions/projects (x86/x64 aware).
 - **LegacyVsTest** - Invoke `vstest.console.exe` for .NET Framework test assemblies using Visual Studio Test tools.
 - **StartAspNet** - Run `dotnet run` for an ASP.NET project with launch-profile selection, returning status + token, PID, URLs, log file (optional), and recent output tail (friendly errors for port-in-use, bad profiles, invalid paths). Child runs are placed in a Windows Job Object so they terminate if the MCP server exits.
@@ -83,6 +87,12 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 3. If you only need tests, call **TestSolution** instead; set `collectTrx=true` to generate TRX logs automatically.
 4. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
 
+### Run tests without blocking (async pipeline)
+1. Call **StartTest** with your `/mnt/.../Solution.sln` path, `configuration`, and any extra `dotnet` args. Use `logDirectory` to control where full logs + TRX artifacts are written.
+2. Poll progress with **GetTestStatus(runId)**; it returns `state` (Running/Completed/Failed/Cancelled), `exitCode`, and stdout/stderr tails.
+3. Need to stop early? Call **CancelTestRun(runId)**.
+4. Use **ListTestRuns(includeCompleted=true)** to recover recent run ids if you lose the token.
+
 ### Start/Stop an ASP.NET Host (with launch profiles)
 1. Call **ListLaunchProfiles** with your `/mnt/.../MyApp.csproj` to see available profiles and their `applicationUrl` values.
 2. Start the app with **StartAspNet**: set `launchProfile` to one from step 1 (optional; defaults to the first) and leave `noBuild=true` (default) for quicker startup. You can override URLs with `urls="http://localhost:5055;https://localhost:7055"`.
@@ -108,6 +118,15 @@ If you’re using the Playwright MCP server (for example the reference at <https
 - `RunOperationResult`: `Succeeded`, `Message`, optional `ExitCode`, optional `Output` (combined), `Suggestions` (array of hints).
 - `GetAspNetOutput`: returns `RunOutputSnapshot` with `StdOut`, `StdErr`, `Combined`, `Truncated` flag.
 - Tail length defaults to 50 lines; override with env `ROSLYN_ASPNET_TAIL_LINES`. `maxLines` argument on **GetAspNetOutput** lets callers down-sample further.
+- `GetTestStatus`: returns `TestRunStatusResult` with `Succeeded`, `Message`, and `Status` (`RunId`, `State`, `ExitCode`, `StdOutTail`, `StdErrTail`, `LogFilePath`, `TrxPath`).
+- Test tail length defaults to 50 lines; override with env `ROSLYN_TEST_TAIL_LINES`.
+
+### Quick tool recipes (one-liners)
+- **ShowHelp**: call **ShowHelp** whenever you need a fresh copy of this document.
+- **ListProjects**: call **ListProjects** with a `.sln` to verify target frameworks before deeper analysis.
+- **GetSymbolInfo**: after **SearchSymbols**, call **GetSymbolInfo** on the fully qualified name to confirm signatures/attributes.
+- **GetTestTrx**: after **TestSolution**/**StartTest** with `collectTrx=true`, call **GetTestTrx(trxToken)** to pull the TRX content.
+- **ListAspNetRecentSessions**: use when you lost a `StartAspNet` token and need the most recent exit info/tail.
 
 ### Legacy Visual Studio Build/Test
 1. Use **LegacyMsBuild** for solutions that rely on the full Visual Studio toolset (e.g., net462). Provide `/p` properties via the `properties` parameter (e.g., `Configuration=Debug;Platform=x86`).

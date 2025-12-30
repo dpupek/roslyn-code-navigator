@@ -72,6 +72,67 @@ namespace RoslynMcpServer.Services
 
         public SolutionValidationResult ValidateFilePath(string path) => ValidatePathInternal(path, requireSolutionExtension: false);
 
+        public SolutionValidationResult ValidateDirectoryPath(string path, bool createIfMissing = true)
+        {
+            try
+            {
+                var workingPath = path;
+
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return Fail("Path was empty. Provide the absolute path to the directory.", path);
+                }
+
+                if (path.Contains("..") || path.Contains("~"))
+                {
+                    return Fail("Path contained unsupported traversal characters ('..' or '~'). Use an absolute path.", path);
+                }
+
+                var format = DeterminePathFormat(path);
+                if (format == PathFormat.Unknown)
+                {
+                    return Fail("Path must be an absolute Windows (e.g., E:\\logs) or Unix (/mnt/e/logs) path.", path);
+                }
+
+                if (!TryNormalizePathForHost(format, path, out workingPath, out var failureMessage, out var infoMessage))
+                {
+                    return Fail(failureMessage ?? "Path format is not supported on this host.", path);
+                }
+
+                if (!string.IsNullOrEmpty(infoMessage))
+                {
+                    _logger.LogInformation(infoMessage);
+                }
+
+                if (File.Exists(workingPath))
+                {
+                    return Fail($"Path '{workingPath}' points to a file. Provide a directory path instead.", workingPath);
+                }
+
+                if (!Directory.Exists(workingPath))
+                {
+                    if (!createIfMissing)
+                    {
+                        return Fail($"Directory '{workingPath}' does not exist.", workingPath);
+                    }
+
+                    Directory.CreateDirectory(workingPath);
+                }
+
+                if (!Directory.Exists(workingPath))
+                {
+                    return Fail($"Directory '{workingPath}' could not be created.", workingPath);
+                }
+
+                LogValidationSuccess(workingPath);
+                return SolutionValidationResult.Success(workingPath);
+            }
+            catch (Exception ex)
+            {
+                return Fail("Unexpected error while validating the directory path. Check server logs for details.", path, ex);
+            }
+        }
+
         private SolutionValidationResult ValidatePathInternal(string path, bool requireSolutionExtension)
         {
             try
