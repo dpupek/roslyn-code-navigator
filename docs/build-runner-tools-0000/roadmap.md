@@ -15,6 +15,7 @@
 - [x] Add legacy `LegacyMsBuild`/`LegacyVsTest` tools invoking VS binaries, including platform/config parameters and TRX/binlog handling.
 - [x] Extend `roslyn_env` output to include resolved runner paths and environment variables (DOTNET_ROOT, MSBUILDDISABLENODEREUSE).
 - [x] Add async test pipeline (`StartTest`, `GetTestStatus`, `CancelTestRun`, `ListTestRuns`) with full log directory support.
+- [x] Harden async test runs with `WaitForExitAsync` fallback + richer logging (args/TRX/finalization).
 
 ## Phase 3 – Validation & Docs
 - [ ] Add unit/integration tests (see test plan) covering SDK selection, legacy fallback, and friendly errors.

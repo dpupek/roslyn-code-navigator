@@ -9,7 +9,7 @@
     <ToolCommandName>codenav-mcp</ToolCommandName>
     <Authors>Dan Pupek</Authors>
     <PackageId>Dpupek.Code.Nav.Mcp</PackageId>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Description>Roslyn MCP server for code navigation and build/test tooling.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/dpupek/roslyn-code-navigator</RepositoryUrl>

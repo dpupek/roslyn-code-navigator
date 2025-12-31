@@ -108,6 +108,22 @@ public sealed class TestRunExecutionService
 
         NonInteractiveEnvironment.Apply(startInfo.Environment);
 
+        _logger.LogInformation(
+            "Preparing test run for {TargetPath}. Runner={Runner} ({RunnerPath}). WorkingDir={WorkingDirectory} CollectTrx={CollectTrx} LogDir={LogDirectory}.",
+            hostPath,
+            runner.DisplayName,
+            runner.ExecutablePath,
+            workingDirectory,
+            collectTrx,
+            logDir);
+        _logger.LogInformation(
+            "dotnet args: {Arguments}",
+            string.Join(" ", startInfo.ArgumentList.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
+        if (collectTrx)
+        {
+            _logger.LogInformation("TRX output path: {TrxPath} (token {TrxToken})", trxPath ?? "<unknown>", trxToken ?? "<none>");
+        }
+
         var process = _processFactory(startInfo);
         process.EnableRaisingEvents = true;
 
@@ -148,6 +164,14 @@ public sealed class TestRunExecutionService
             return new TestRunStartResult(false, $"Failed to start dotnet test process: {ex.Message}");
         }
 
+        _logger.LogInformation(
+            "Started test run {RunId} (pid {ProcessId}) for {TargetPath} using {Runner}. Log: {LogFile}.",
+            runId,
+            process.Id,
+            hostPath,
+            runner.DisplayName,
+            string.IsNullOrWhiteSpace(logFilePath) ? "<none>" : logFilePath);
+
         var runCts = new CancellationTokenSource();
         var stdoutTask = Task.Run(() => ReadStream(process.StandardOutput, stdoutTail, logWriter, runCts.Token));
         var stderrTask = Task.Run(() => ReadStream(process.StandardError, stderrTail, logWriter, runCts.Token));
@@ -172,21 +196,22 @@ public sealed class TestRunExecutionService
 
         process.Exited += async (_, _) =>
         {
-            FinalizeRun(state);
+            await FinalizeRunAsync(state, stdoutTask, stderrTask).ConfigureAwait(false);
+        };
+
+        _ = Task.Run(async () =>
+        {
             try
             {
-                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+                await process.WaitForExitAsync().ConfigureAwait(false);
             }
             catch
             {
+                _logger.LogWarning("Test run {RunId} wait-for-exit faulted.", runId);
             }
 
-            state.LogWriter?.Dispose();
-            process.Dispose();
-
-            _runs.TryRemove(runId, out _);
-            EnqueueRecentExit(state);
-        };
+            await FinalizeRunAsync(state, stdoutTask, stderrTask).ConfigureAwait(false);
+        });
 
         return new TestRunStartResult(
             true,
@@ -208,6 +233,11 @@ public sealed class TestRunExecutionService
 
         if (_runs.TryGetValue(runId, out var active))
         {
+            if (active.Process.HasExited)
+            {
+                _ = FinalizeRunAsync(active, active.StdOutTask, active.StdErrTask);
+            }
+
             return new TestRunStatusResult(true, "OK", BuildStatus(active));
         }
 
@@ -375,18 +405,71 @@ public sealed class TestRunExecutionService
         return Path.Combine(basePath, child);
     }
 
-    private void FinalizeRun(TestRunState state)
+    private async Task FinalizeRunAsync(TestRunState state, Task stdoutTask, Task stderrTask)
     {
         lock (state.Sync)
         {
-            if (state.CompletedAt is not null)
+            if (state.CleanupStarted)
             {
                 return;
             }
 
+            state.CleanupStarted = true;
             state.CompletedAt = DateTimeOffset.UtcNow;
-            state.ExitCode = state.Process.ExitCode;
+            if (state.Process.HasExited)
+            {
+                state.ExitCode = state.Process.ExitCode;
+            }
         }
+
+        try
+        {
+            state.HasExitedSnapshot = state.Process.HasExited;
+        }
+        catch (Exception ex)
+        {
+            state.DiagnosticsFaulted = true;
+            _logger.LogWarning(ex, "Failed to snapshot process state for test run {RunId}.", state.RunId);
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(state.LogFilePath) && File.Exists(state.LogFilePath))
+            {
+                state.LastLogTimestampSnapshot = File.GetLastWriteTimeUtc(state.LogFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            state.DiagnosticsFaulted = true;
+            _logger.LogWarning(ex, "Failed to snapshot log timestamp for test run {RunId}.", state.RunId);
+        }
+
+        try
+        {
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        }
+        catch
+        {
+            _logger.LogWarning("Test run {RunId} log readers faulted.", state.RunId);
+        }
+
+        var completedAt = state.CompletedAt ?? DateTimeOffset.UtcNow;
+        var duration = completedAt - state.StartedAt;
+        _logger.LogInformation(
+            "Finalized test run {RunId} (pid {ProcessId}) state={State} exit={ExitCode} duration={Duration}.",
+            state.RunId,
+            state.Process.Id,
+            state.CancelRequested ? "Cancelled" : state.ExitCode == 0 ? "Completed" : "Failed",
+            state.ExitCode,
+            duration);
+
+        state.LogWriter?.Dispose();
+        state.Process.Dispose();
+        state.ProcessDisposed = true;
+
+        _runs.TryRemove(state.RunId, out _);
+        EnqueueRecentExit(state);
     }
 
     private TestRunState? FindRecent(string runId)
@@ -407,12 +490,19 @@ public sealed class TestRunExecutionService
         DateTimeOffset? completedAt;
         int? exitCode;
         bool cancelRequested;
+        bool? hasExited = null;
+        DateTimeOffset? lastLogTimestamp = null;
+        var diagnosticsOk = true;
 
         lock (state.Sync)
         {
             completedAt = state.CompletedAt;
             exitCode = state.ExitCode;
             cancelRequested = state.CancelRequested;
+            if (state.DiagnosticsFaulted)
+            {
+                diagnosticsOk = false;
+            }
         }
 
         var duration = completedAt.HasValue ? completedAt.Value - state.StartedAt : (TimeSpan?)null;
@@ -420,6 +510,48 @@ public sealed class TestRunExecutionService
             ? "Running"
             : cancelRequested ? "Cancelled"
             : exitCode == 0 ? "Completed" : "Failed";
+
+        if (state.HasExitedSnapshot.HasValue)
+        {
+            hasExited = state.HasExitedSnapshot;
+        }
+        else
+        {
+            try
+            {
+                hasExited = state.Process.HasExited;
+            }
+            catch (Exception ex)
+            {
+                diagnosticsOk = false;
+                _logger.LogWarning(ex, "Failed to read process state for test run {RunId}.", state.RunId);
+            }
+        }
+
+        if (state.LastLogTimestampSnapshot.HasValue)
+        {
+            lastLogTimestamp = state.LastLogTimestampSnapshot;
+        }
+        else
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(state.LogFilePath) && File.Exists(state.LogFilePath))
+                {
+                    lastLogTimestamp = File.GetLastWriteTimeUtc(state.LogFilePath);
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnosticsOk = false;
+                _logger.LogWarning(ex, "Failed to read log timestamp for test run {RunId}.", state.RunId);
+            }
+        }
+
+        if (!diagnosticsOk)
+        {
+            status = "Inconclusive";
+        }
 
         return new TestRunStatus(
             state.RunId,
@@ -429,6 +561,8 @@ public sealed class TestRunExecutionService
             state.StartedAt,
             duration,
             exitCode,
+            hasExited,
+            lastLogTimestamp,
             FormatTail(state.StdOutTail),
             FormatTail(state.StdErrTail),
             string.IsNullOrWhiteSpace(state.LogFilePath) ? null : state.LogFilePath,
@@ -572,6 +706,11 @@ public sealed class TestRunExecutionService
         public DateTimeOffset? CompletedAt { get; set; }
         public int? ExitCode { get; set; }
         public bool CancelRequested { get; private set; }
+        public bool CleanupStarted { get; set; }
+        public bool? HasExitedSnapshot { get; set; }
+        public DateTimeOffset? LastLogTimestampSnapshot { get; set; }
+        public bool DiagnosticsFaulted { get; set; }
+        public bool ProcessDisposed { get; set; }
         public object Sync { get; } = new();
 
         public void MarkCancelRequested()

@@ -118,7 +118,7 @@ If you’re using the Playwright MCP server (for example the reference at <https
 - `RunOperationResult`: `Succeeded`, `Message`, optional `ExitCode`, optional `Output` (combined), `Suggestions` (array of hints).
 - `GetAspNetOutput`: returns `RunOutputSnapshot` with `StdOut`, `StdErr`, `Combined`, `Truncated` flag.
 - Tail length defaults to 50 lines; override with env `ROSLYN_ASPNET_TAIL_LINES`. `maxLines` argument on **GetAspNetOutput** lets callers down-sample further.
-- `GetTestStatus`: returns `TestRunStatusResult` with `Succeeded`, `Message`, and `Status` (`RunId`, `State`, `ExitCode`, `StdOutTail`, `StdErrTail`, `LogFilePath`, `TrxPath`).
+- `GetTestStatus`: returns `TestRunStatusResult` with `Succeeded`, `Message`, and `Status` (`RunId`, `State`, `ExitCode`, `HasExited`, `LastLogTimestamp`, `StdOutTail`, `StdErrTail`, `LogFilePath`, `TrxPath`). If process/log diagnostics fail, `State` is set to `Inconclusive` and the tool still returns successfully.
 - Test tail length defaults to 50 lines; override with env `ROSLYN_TEST_TAIL_LINES`.
 
 ### Quick tool recipes (one-liners)

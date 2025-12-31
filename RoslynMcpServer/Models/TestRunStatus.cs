@@ -21,6 +21,8 @@ public sealed record TestRunStatus(
     DateTimeOffset StartedAt,
     TimeSpan? Duration,
     int? ExitCode,
+    bool? HasExited,
+    DateTimeOffset? LastLogTimestamp,
     string? StdOutTail,
     string? StdErrTail,
     string? LogFilePath,
