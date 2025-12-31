@@ -23,6 +23,8 @@ public sealed record TestRunStatus(
     int? ExitCode,
     bool? HasExited,
     DateTimeOffset? LastLogTimestamp,
+    IReadOnlyList<string>? FailedTests,
+    string? FirstFailureMessage,
     string? StdOutTail,
     string? StdErrTail,
     string? LogFilePath,

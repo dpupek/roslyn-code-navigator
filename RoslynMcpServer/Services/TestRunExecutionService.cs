@@ -10,6 +10,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace RoslynMcpServer.Services;
 
@@ -492,6 +493,8 @@ public sealed class TestRunExecutionService
         bool cancelRequested;
         bool? hasExited = null;
         DateTimeOffset? lastLogTimestamp = null;
+        IReadOnlyList<string>? failedTests = null;
+        string? firstFailureMessage = null;
         var diagnosticsOk = true;
 
         lock (state.Sync)
@@ -553,6 +556,23 @@ public sealed class TestRunExecutionService
             status = "Inconclusive";
         }
 
+        if (!string.IsNullOrWhiteSpace(state.TrxPath) && File.Exists(state.TrxPath))
+        {
+            try
+            {
+                var summary = ParseTrxFailureSummary(state.TrxPath);
+                if (summary is not null)
+                {
+                    failedTests = summary.FailedTests;
+                    firstFailureMessage = summary.FirstFailureMessage;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse TRX summary for test run {RunId}.", state.RunId);
+            }
+        }
+
         return new TestRunStatus(
             state.RunId,
             status,
@@ -563,6 +583,8 @@ public sealed class TestRunExecutionService
             exitCode,
             hasExited,
             lastLogTimestamp,
+            failedTests,
+            firstFailureMessage,
             FormatTail(state.StdOutTail),
             FormatTail(state.StdErrTail),
             string.IsNullOrWhiteSpace(state.LogFilePath) ? null : state.LogFilePath,
@@ -655,6 +677,37 @@ public sealed class TestRunExecutionService
         return 50;
     }
 
+    internal static TrxFailureSummary? ParseTrxFailureSummary(string trxPath)
+    {
+        var document = XDocument.Load(trxPath);
+        if (document.Root is null)
+        {
+            return null;
+        }
+
+        var ns = document.Root.Name.Namespace;
+        var failed = document.Descendants(ns + "UnitTestResult")
+            .Where(element => string.Equals((string?)element.Attribute("outcome"), "Failed", StringComparison.OrdinalIgnoreCase))
+            .Select(element => (string?)element.Attribute("testName"))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Cast<string>()
+            .ToList();
+
+        if (failed.Count == 0)
+        {
+            return null;
+        }
+
+        var firstFailureMessage = document.Descendants(ns + "UnitTestResult")
+            .FirstOrDefault(element => string.Equals((string?)element.Attribute("outcome"), "Failed", StringComparison.OrdinalIgnoreCase))?
+            .Element(ns + "Output")?
+            .Element(ns + "ErrorInfo")?
+            .Element(ns + "Message")?
+            .Value;
+
+        return new TrxFailureSummary(failed, string.IsNullOrWhiteSpace(firstFailureMessage) ? null : firstFailureMessage);
+    }
+
     private sealed class TestRunState
     {
         public TestRunState(
@@ -722,4 +775,8 @@ public sealed class TestRunExecutionService
             }
         }
     }
+
+    internal sealed record TrxFailureSummary(
+        IReadOnlyList<string> FailedTests,
+        string? FirstFailureMessage);
 }

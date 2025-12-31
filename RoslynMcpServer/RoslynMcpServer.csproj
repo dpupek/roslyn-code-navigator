@@ -16,6 +16,9 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="RoslynMcpServer.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- MCP Server SDK -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="4.8.0" />
