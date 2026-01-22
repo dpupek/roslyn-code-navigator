@@ -275,8 +275,8 @@ There’s no extra wiring needed on the server; good prompts plus the `ShowHelp`
 This repo publishes the .NET tool to nuget.org on tags matching `vX.Y.Z` via GitHub Actions. Create a tag and push it, and the workflow will pack and push:
 
 ```bash
-git tag v0.1.6
-git push origin v0.1.6
+git tag v0.1.7
+git push origin v0.1.7
 ```
 
 Make sure the repo has a `NUGET_API_KEY` secret configured with push permissions.

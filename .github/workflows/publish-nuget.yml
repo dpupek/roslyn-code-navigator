@@ -47,9 +47,9 @@ jobs:
             $nuget,
             "",
             "Install/Update:",
-            "```",
-            "dotnet tool update -g codenav-mcp",
-            "```"
+            '```',
+            'dotnet tool update -g codenav-mcp',
+            '```'
           ) -join "`n"
 
           $notes | Out-File -FilePath release-notes.md -Encoding utf8
