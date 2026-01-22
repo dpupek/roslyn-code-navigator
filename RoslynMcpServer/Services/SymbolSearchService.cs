@@ -39,6 +39,11 @@ namespace RoslynMcpServer.Services
             _cache = cache;
             _maxParallelProjectOperations = ResolveParallelism();
             _cacheEnabled = IsCacheEnabled();
+
+            _logger.LogInformation(
+                "Symbol search parallelism set to {MaxParallel} (cache enabled: {CacheEnabled}).",
+                _maxParallelProjectOperations,
+                _cacheEnabled);
         }
 
         public async Task<IEnumerable<SymbolSearchResult>> SearchSymbolsAsync(

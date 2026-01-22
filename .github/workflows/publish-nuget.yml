@@ -48,7 +48,7 @@ jobs:
             "",
             "Install/Update:",
             '```',
-            'dotnet tool update -g codenav-mcp',
+            'dotnet tool update -g Dpupek.Code.Nav.Mcp',
             '```'
           ) -join "`n"
 

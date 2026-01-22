@@ -153,6 +153,7 @@ public sealed class TestRunExecutionService
         {
             if (!process.Start())
             {
+                _logger.LogWarning("Failed to start dotnet test for {TargetPath}.", hostPath);
                 logWriter?.Dispose();
                 process.Dispose();
                 return new TestRunStartResult(false, "Failed to start dotnet test process.");
@@ -160,6 +161,7 @@ public sealed class TestRunExecutionService
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Failed to start dotnet test for {TargetPath}.", hostPath);
             logWriter?.Dispose();
             process.Dispose();
             return new TestRunStartResult(false, $"Failed to start dotnet test process: {ex.Message}");
@@ -272,7 +274,7 @@ public sealed class TestRunExecutionService
         state.MarkCancelRequested();
         try
         {
-            if (!state.Process.HasExited)
+            if (TryGetHasExited(state.Process, out var hasExited) && !hasExited)
             {
                 state.Process.Kill(entireProcessTree: true);
             }
@@ -417,15 +419,18 @@ public sealed class TestRunExecutionService
 
             state.CleanupStarted = true;
             state.CompletedAt = DateTimeOffset.UtcNow;
-            if (state.Process.HasExited)
+            if (TryGetHasExited(state.Process, out var hasExited) && hasExited && TryGetExitCode(state.Process, out var exitCode))
             {
-                state.ExitCode = state.Process.ExitCode;
+                state.ExitCode = exitCode;
             }
         }
 
         try
         {
-            state.HasExitedSnapshot = state.Process.HasExited;
+            if (TryGetHasExited(state.Process, out var hasExited))
+            {
+                state.HasExitedSnapshot = hasExited;
+            }
         }
         catch (Exception ex)
         {
@@ -465,7 +470,14 @@ public sealed class TestRunExecutionService
             state.ExitCode,
             duration);
 
-        state.LogWriter?.Dispose();
+        state.RunCts.Cancel();
+        try
+        {
+            state.LogWriter?.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
         state.Process.Dispose();
         state.ProcessDisposed = true;
 
@@ -522,7 +534,10 @@ public sealed class TestRunExecutionService
         {
             try
             {
-                hasExited = state.Process.HasExited;
+                if (TryGetHasExited(state.Process, out var exitState))
+                {
+                    hasExited = exitState;
+                }
             }
             catch (Exception ex)
             {
@@ -645,7 +660,14 @@ public sealed class TestRunExecutionService
             tail.Enqueue(line);
             if (logWriter != null)
             {
-                await logWriter.WriteLineAsync(line).ConfigureAwait(false);
+                try
+                {
+                    await logWriter.WriteLineAsync(line).ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException)
+                {
+                    logWriter = null;
+                }
             }
         }
 
@@ -675,6 +697,42 @@ public sealed class TestRunExecutionService
         }
 
         return 50;
+    }
+
+    private static bool TryGetHasExited(Process process, out bool hasExited)
+    {
+        try
+        {
+            hasExited = process.HasExited;
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        hasExited = true;
+        return false;
+    }
+
+    private static bool TryGetExitCode(Process process, out int exitCode)
+    {
+        try
+        {
+            exitCode = process.ExitCode;
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        exitCode = default;
+        return false;
     }
 
     internal static TrxFailureSummary? ParseTrxFailureSummary(string trxPath)

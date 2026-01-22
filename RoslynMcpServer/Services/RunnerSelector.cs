@@ -43,6 +43,12 @@ public sealed class RunnerSelector
             ? $"dotnet ({candidate.Version})"
             : $"dotnet ({candidate.Version}, requested {requestedVersion})";
 
+        _logger.LogInformation(
+            "Selected dotnet runner {Description} at {Path} (DOTNET_ROOT={DotnetRoot}).",
+            description,
+            executablePath,
+            environment.TryGetValue("DOTNET_ROOT", out var dotnetRoot) ? dotnetRoot : "<unset>");
+
         return new RunnerSelection("dotnet", executablePath, null, environment, description);
     }
 
@@ -71,7 +77,9 @@ public sealed class RunnerSelector
             ["MSBUILDDISABLENODEREUSE"] = "1",
         };
 
-        return new RunnerSelection("msbuild", translated, null, environment, $"MSBuild ({instance.Name} {instance.Version})");
+        var description = $"MSBuild ({instance.Name} {instance.Version})";
+        _logger.LogInformation("Selected MSBuild runner {Description} at {Path}.", description, translated);
+        return new RunnerSelection("msbuild", translated, null, environment, description);
     }
 
     public RunnerSelection SelectVsTestRunner(string? preferredInstance)
@@ -90,7 +98,9 @@ public sealed class RunnerSelector
             ["MSBUILDDISABLENODEREUSE"] = "1",
         };
 
-        return new RunnerSelection("vstest", translated, null, environment, $"vstest.console ({instance.Name} {instance.Version})");
+        var description = $"vstest.console ({instance.Name} {instance.Version})";
+        _logger.LogInformation("Selected vstest runner {Description} at {Path}.", description, translated);
+        return new RunnerSelection("vstest", translated, null, environment, description);
     }
 
     private string? FindDefaultMsbuildPath()

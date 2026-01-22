@@ -64,6 +64,8 @@ namespace RoslynMcpServer.Services
         private async Task<Solution> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken)
         {
             var workspace = MSBuildWorkspace.Create(CreateWorkspaceProperties());
+            string? failureMessage = null;
+            string? diagnosticMessage = null;
 
             workspace.WorkspaceFailed += (sender, args) =>
             {
@@ -71,7 +73,8 @@ namespace RoslynMcpServer.Services
                 if (args.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
                 {
                     var friendlyMessage = BuildFriendlyLoadFailureMessage(solutionPath, args.Diagnostic.Message);
-                    throw new SolutionLoadException(friendlyMessage, args.Diagnostic.Message);
+                    failureMessage ??= friendlyMessage;
+                    diagnosticMessage ??= args.Diagnostic.Message;
                 }
             };
 
@@ -80,27 +83,52 @@ namespace RoslynMcpServer.Services
                 var solution = await workspace
                     .OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
+
+                if (failureMessage != null)
+                {
+                    throw new SolutionLoadException(failureMessage, diagnosticMessage);
+                }
+
                 _workspaces[solutionPath] = workspace;
                 return solution;
             }
             catch (SolutionLoadException)
             {
+                workspace.Dispose();
+                _workspaces.TryRemove(solutionPath, out _);
+                _solutionCache.TryRemove(solutionPath, out _);
                 throw;
             }
             catch (FileNotFoundException ex)
             {
+                workspace.Dispose();
+                _workspaces.TryRemove(solutionPath, out _);
+                _solutionCache.TryRemove(solutionPath, out _);
                 var friendlyMessage = BuildAssemblyLoadFailureMessage(solutionPath, ex);
                 throw new SolutionLoadException(friendlyMessage, ex.FileName, ex);
             }
             catch (ReflectionTypeLoadException ex)
             {
+                workspace.Dispose();
+                _workspaces.TryRemove(solutionPath, out _);
+                _solutionCache.TryRemove(solutionPath, out _);
                 var friendlyMessage = BuildReflectionLoadFailureMessage(solutionPath, ex);
                 throw new SolutionLoadException(friendlyMessage, ex.LoaderExceptions?.FirstOrDefault()?.Message, ex);
             }
             catch (InvalidOperationException ex)
             {
+                workspace.Dispose();
+                _workspaces.TryRemove(solutionPath, out _);
+                _solutionCache.TryRemove(solutionPath, out _);
                 var friendlyMessage = BuildFriendlyLoadFailureMessage(solutionPath, ex.Message);
                 throw new SolutionLoadException(friendlyMessage, ex.Message, ex);
+            }
+            catch
+            {
+                workspace.Dispose();
+                _workspaces.TryRemove(solutionPath, out _);
+                _solutionCache.TryRemove(solutionPath, out _);
+                throw;
             }
         }
 

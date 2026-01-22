@@ -69,11 +69,13 @@ public sealed class WindowsProcessLauncher
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
 
+        var cancellationRequested = false;
         using var registration = cancellationToken.Register(() =>
         {
+            cancellationRequested = true;
             try
             {
-                if (!process.HasExited)
+                if (TryGetHasExited(process, out var hasExited) && !hasExited)
                 {
                     process.Kill(entireProcessTree: true);
                 }
@@ -100,13 +102,51 @@ public sealed class WindowsProcessLauncher
         var output = await stdoutTask.ConfigureAwait(false);
         var error = await stderrTask.ConfigureAwait(false);
 
-        var success = process.ExitCode == 0;
+        var exitCode = TryGetExitCode(process, out var code) ? code : -1;
+        var success = exitCode == 0;
+        var wasCancelled = cancellationRequested || cancellationToken.IsCancellationRequested;
 
         if (!success)
         {
-            _logger.LogWarning("Runner {Runner} exited with code {ExitCode}.", request.RunnerDescription, process.ExitCode);
+            _logger.LogWarning("Runner {Runner} exited with code {ExitCode}.", request.RunnerDescription, exitCode);
         }
 
-        return new ProcessExecutionResult(success, process.ExitCode, stopwatch.Elapsed, output, error, false, request.RunnerDescription);
+        return new ProcessExecutionResult(success, exitCode, stopwatch.Elapsed, output, error, wasCancelled, request.RunnerDescription);
+    }
+
+    private static bool TryGetHasExited(Process process, out bool hasExited)
+    {
+        try
+        {
+            hasExited = process.HasExited;
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        hasExited = true;
+        return false;
+    }
+
+    private static bool TryGetExitCode(Process process, out int exitCode)
+    {
+        try
+        {
+            exitCode = process.ExitCode;
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        exitCode = -1;
+        return false;
     }
 }

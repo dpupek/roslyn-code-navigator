@@ -99,6 +99,46 @@ public sealed class TestRunExecutionServiceTests
     }
 
     [Fact]
+    public async Task Cancel_ReturnsCompletedStatusAfterRunEnds()
+    {
+        #region Arrange
+        using var dotnet = FakeDotnet.Create("echo \"starting\"\nsleep 0.1\necho \"done\"");
+        using var tempSolution = TempSolution.Create();
+        using var logDir = TempDirectory.Create();
+        var service = CreateService(dotnet.SdkBasePath, dotnet.DotnetPath);
+        var request = new DotnetCommandRequest(
+            Command: "test",
+            TargetPath: tempSolution.SolutionPath,
+            WorkingDirectory: null,
+            Configuration: "Debug",
+            Framework: null,
+            RuntimeIdentifier: null,
+            OutputPath: null,
+            SdkVersion: null,
+            AdditionalArguments: Array.Empty<string>());
+        #endregion
+
+        #region Initial Assert
+        File.Exists(dotnet.DotnetPath).Should().BeTrue();
+        #endregion
+
+        #region Act
+        var start = service.StartAsync(request, collectTrx: false, logDir.Path, CancellationToken.None);
+        var status = await WaitForStatusAsync(service, start.RunId, TimeSpan.FromSeconds(5));
+        var cancel = service.Cancel(start.RunId!);
+        #endregion
+
+        #region Assert
+        status.Succeeded.Should().BeTrue();
+        status.Status.Should().NotBeNull();
+        status.Status!.State.Should().Be("Completed");
+        cancel.Succeeded.Should().BeTrue();
+        cancel.Status.Should().NotBeNull();
+        cancel.Status!.State.Should().Be("Completed");
+        #endregion
+    }
+
+    [Fact]
     public void StartAsync_FailsWhenLogDirectoryIsFile()
     {
         #region Arrange

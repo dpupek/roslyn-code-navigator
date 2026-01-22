@@ -17,7 +17,7 @@
 
 ## Operational Tasks
 - [x] Wire the new tools into `RoslynMcpServer.Tools` with proper descriptions and help docs.
-- [ ] Add unit/integration tests covering the new tool behaviors using `TestAssets/SampleSolution`.
+- [x] Add unit/integration tests covering the new tool behaviors (process launcher + test run hardening paths).
 - [x] Document usage examples in `help.md` and update recipes where relevant (e.g., interface workflows).
 - [ ] Extend docs with build/test wrapper guidance (agents.md, help.md, recipes) and permission troubleshooting.
 - [ ] Add discovery endpoints (`ListInstalledSdks`) so agents can inspect available toolchains before invoking builds/tests.

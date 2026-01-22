@@ -68,7 +68,23 @@ public sealed class BuildExecutionService
             ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
-        return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Running {Command} for {TargetPath} with {Runner}. WorkingDir={WorkingDirectory}.",
+            request.Command,
+            hostPath,
+            runner.DisplayName,
+            workingDirectory);
+
+        var result = await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Completed {Command} for {TargetPath} with {Runner}. ExitCode={ExitCode} Duration={Duration}.",
+            request.Command,
+            hostPath,
+            runner.DisplayName,
+            result.ExitCode,
+            result.Duration);
+
+        return result;
     }
 
     public async Task<ProcessExecutionResult> RunMsbuildAsync(MsbuildCommandRequest request, CancellationToken cancellationToken)
@@ -113,7 +129,21 @@ public sealed class BuildExecutionService
             ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
-        return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Running msbuild for {TargetPath} with {Runner}. WorkingDir={WorkingDirectory}.",
+            request.ProjectOrSolutionPath,
+            runner.DisplayName,
+            workingDirectory);
+
+        var result = await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Completed msbuild for {TargetPath} with {Runner}. ExitCode={ExitCode} Duration={Duration}.",
+            request.ProjectOrSolutionPath,
+            runner.DisplayName,
+            result.ExitCode,
+            result.Duration);
+
+        return result;
     }
 
     public async Task<ProcessExecutionResult> RunVsTestAsync(VsTestCommandRequest request, CancellationToken cancellationToken)
@@ -172,7 +202,21 @@ public sealed class BuildExecutionService
             ApplyNonInteractiveOverrides(runner.EnvironmentOverrides),
             runner.DisplayName);
 
-        return await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Running vstest for {TargetPath} with {Runner}. WorkingDir={WorkingDirectory}.",
+            request.TestAssemblyPaths[0],
+            runner.DisplayName,
+            workingDirectory);
+
+        var result = await _processLauncher.RunAsync(processRequest, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Completed vstest for {TargetPath} with {Runner}. ExitCode={ExitCode} Duration={Duration}.",
+            request.TestAssemblyPaths[0],
+            runner.DisplayName,
+            result.ExitCode,
+            result.Duration);
+
+        return result;
     }
 
     private static IReadOnlyList<string> BuildDotnetArguments(string command, string windowsPath, DotnetCommandRequest request)
