@@ -55,8 +55,8 @@ Use this server when you need compiler-accurate, MSBuild-aware analysis of mediu
 
 1. Clone and publish the server:
    ```powershell
-   git clone https://github.com/carquiza/RoslynMCP.git
-   cd RoslynMCP
+   git clone https://github.com/dpupek/roslyn-code-navigator.git
+   cd roslyn-code-navigator
    pwsh scripts/build-and-publish.ps1
    ```
 2. Copy the printed `[mcp_servers.roslyn_code_navigator]` TOML block into your `~/.codex/config.toml`.
@@ -74,8 +74,8 @@ Use this server when you need compiler-accurate, MSBuild-aware analysis of mediu
 
 ### 1. Download the sources
 ```powershell
-git clone https://github.com/carquiza/RoslynMCP.git
-cd RoslynMCP/RoslynMcpServer
+git clone https://github.com/dpupek/roslyn-code-navigator.git
+cd roslyn-code-navigator
 ```
 
 ### 2. Restore & build once
@@ -127,7 +127,7 @@ Codex expects MCP servers to be listed under `[mcp_servers]` in `~/.codex/config
 command = "/mnt/e/Apps/RoslynMcp/RoslynMcpServer.exe"
 ```
 
-The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_navigator` (or automatically when a tool request requires it) and communicate over stdio. You can further customize behavior with environment variables and timeouts; see the logging and environment notes below.
+The Codex CLI will launch the MCP server automatically when a tool request requires it and communicate over stdio. You can further customize behavior with environment variables and timeouts; see the logging and environment notes below.
 
 ### Logging, NuGet & environment notes
 
@@ -159,7 +159,7 @@ The Codex CLI will launch the MCP server via `codex mcp start roslyn_code_naviga
 - Before MSBuild loads the solution, the server inspects all projects, determines their target frameworks, and verifies that the corresponding SDKs/targeting packs are installed. Missing SDKs produce actionable error messages describing which frameworks require attention.
 
 ### Verify the connection
-1. Start the server: `codex mcp start roslyn_code_navigator`
+1. Trigger any Roslyn tool (e.g., `codex mcp tools roslyn_code_navigator list`) to let Codex spin up the server.
 2. Run `codex mcp tools roslyn_code_navigator list` – the tools should appear.
 3. Try `codex mcp call roslyn_code_navigator ShowHelp` to ensure responses flow correctly.
 4. Point a tool (e.g., SearchSymbols) at a small solution to confirm MSBuild loads successfully.
