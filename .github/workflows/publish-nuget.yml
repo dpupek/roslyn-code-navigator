@@ -9,6 +9,8 @@ on:
 jobs:
   publish:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -17,8 +19,44 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $prev = git tag --list "v*.*.*" --sort=-creatordate | Where-Object { $_ -ne $tag } | Select-Object -First 1
+          if ($prev) {
+            $log = git log "$prev..$tag" --pretty=format:"- %s"
+          } else {
+            $log = git log "$tag" --pretty=format:"- %s"
+          }
+
+          if (-not $log -or $log.Count -eq 0) {
+            $log = @("- No user-facing changes recorded.")
+          }
+
+          $logText = $log -join "`n"
+          $nuget = "https://www.nuget.org/packages/Dpupek.Code.Nav.Mcp/"
+
+          $notes = @(
+            "## $tag",
+            "",
+            "### Changes",
+            $logText,
+            "",
+            "### NuGet",
+            $nuget,
+            "",
+            "Install/Update:",
+            "```",
+            "dotnet tool update -g codenav-mcp",
+            "```"
+          ) -join "`n"
+
+          $notes | Out-File -FilePath release-notes.md -Encoding utf8
+          $logText | Out-File -FilePath package-notes.txt -Encoding utf8
+
       - name: Pack
-        run: dotnet pack RoslynMcpServer/RoslynMcpServer.csproj -c Release
+        run: dotnet pack RoslynMcpServer/RoslynMcpServer.csproj -c Release -p:PackageReleaseNotesFile=package-notes.txt
 
       - name: Push to nuget.org
         shell: pwsh
@@ -30,3 +68,8 @@ jobs:
           }
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
