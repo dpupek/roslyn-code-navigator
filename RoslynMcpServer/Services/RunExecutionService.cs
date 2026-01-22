@@ -624,10 +624,10 @@ public sealed class RunExecutionService
             hasExited = process.HasExited;
             return true;
         }
-        catch (InvalidOperationException)
+        catch (ObjectDisposedException)
         {
         }
-        catch (ObjectDisposedException)
+        catch (InvalidOperationException)
         {
         }
 
@@ -642,10 +642,10 @@ public sealed class RunExecutionService
             exitCode = process.ExitCode;
             return true;
         }
-        catch (InvalidOperationException)
+        catch (ObjectDisposedException)
         {
         }
-        catch (ObjectDisposedException)
+        catch (InvalidOperationException)
         {
         }
 
