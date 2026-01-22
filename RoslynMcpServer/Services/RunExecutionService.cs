@@ -150,11 +150,13 @@ public sealed class RunExecutionService
         {
             if (!process.Start())
             {
+                _logger.LogWarning("Failed to start dotnet run process for {ProjectPath}.", hostPath);
                 return Fail("Failed to start dotnet run process.");
             }
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Failed to start dotnet run process for {ProjectPath}.", hostPath);
             logWriter?.Dispose();
             process.Dispose();
             return Fail("Failed to start dotnet run process (process launch error)");
@@ -180,22 +182,50 @@ public sealed class RunExecutionService
         _sessions[token] = state;
         CreateMarker(process.Id, token, hostPath, markerDir);
 
+        _logger.LogInformation(
+            "Started run session {Token} (PID {Pid}) for {ProjectPath} (profile: {Profile}, urls: {Urls}, log: {LogPath}).",
+            token,
+            process.Id,
+            hostPath,
+            selectedProfile ?? "<none>",
+            resolvedUrls.Count == 0 ? "<none>" : string.Join(";", resolvedUrls),
+            logPath ?? "<none>");
+
         process.Exited += async (_, _) =>
         {
-            if (_sessions.TryRemove(token, out var removed))
-            {
-                EnqueueRecentExit(removed);
-            }
             try
             {
-                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+                if (_sessions.TryRemove(token, out var removed))
+                {
+                    EnqueueRecentExit(removed);
+                }
+
+                try
+                {
+                    await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to flush output tasks for run session {Token}.", token);
+                }
+
+                RemoveMarker(process.Id, markerDir);
+                try
+                {
+                    logWriter?.Dispose();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+
+                var exitCode = TryGetExitCode(process, out var exitValue) ? exitValue.ToString() : "<unavailable>";
+                _logger.LogInformation("Run session {Token} (PID {Pid}) exited with code {ExitCode}.", token, process.Id, exitCode);
+                process.Dispose();
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Unhandled error while finalizing run session {Token} (PID {Pid}).", token, process.Id);
             }
-            RemoveMarker(process.Id, markerDir);
-            logWriter?.Dispose();
-            process.Dispose();
         };
 
         return new RunOperationResult(true, "Started", null, null, null, session);
@@ -212,9 +242,18 @@ public sealed class RunExecutionService
 
         try
         {
-            if (IsProcessDisposed(state.Process) || state.Process.HasExited)
+            _logger.LogInformation("Stopping run session {Token} (PID {Pid}) with timeout {TimeoutMs}ms.", token, pid, (int)timeout.TotalMilliseconds);
+
+            if (IsProcessDisposed(state.Process) || !TryGetHasExited(state.Process, out var hasExited))
             {
-                return Task.FromResult(new RunOperationResult(true, $"Session {token} already exited.", ExitCode: state.Process.ExitCode, Session: state.Session));
+                _logger.LogWarning("Run session {Token} (PID {Pid}) process handle unavailable while stopping.", token, pid);
+                return Task.FromResult(new RunOperationResult(true, $"Session {token} already exited.", Session: state.Session));
+            }
+
+            if (hasExited)
+            {
+                var exitCode = TryGetExitCode(state.Process, out var exitValue) ? exitValue : (int?)null;
+                return Task.FromResult(new RunOperationResult(true, $"Session {token} already exited.", ExitCode: exitCode, Session: state.Session));
             }
 
             if (!state.Process.WaitForExit((int)timeout.TotalMilliseconds))
@@ -232,11 +271,18 @@ public sealed class RunExecutionService
         {
             EnqueueRecentExit(state);
             RemoveMarker(pid, state.MarkerDirectory);
-            state.LogWriter?.Dispose();
+            try
+            {
+                state.LogWriter?.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
             state.Process.Dispose();
         }
 
-        return Task.FromResult(new RunOperationResult(true, $"Stopped session {token}.", ExitCode: state.Process.ExitCode, Session: state.Session));
+        var stoppedExitCode = TryGetExitCode(state.Process, out var stoppedValue) ? stoppedValue : (int?)null;
+        return Task.FromResult(new RunOperationResult(true, $"Stopped session {token}.", ExitCode: stoppedExitCode, Session: state.Session));
     }
 
     public IReadOnlyCollection<RunSession> ListSessions()
@@ -468,6 +514,7 @@ public sealed class RunExecutionService
     private static async Task<string> ReadStream(StreamReader reader, LimitedConcurrentQueue<string> tail, LimitedConcurrentQueue<string> combinedTail, StreamWriter? logWriter, CancellationToken token)
     {
         var all = new List<string>();
+        var canWriteLog = logWriter is not null;
         while (!token.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync().ConfigureAwait(false);
@@ -479,9 +526,16 @@ public sealed class RunExecutionService
             all.Add(line);
             tail.Enqueue(line);
             combinedTail.Enqueue(line);
-            if (logWriter != null)
+            if (canWriteLog && logWriter != null)
             {
-                await logWriter.WriteLineAsync(line).ConfigureAwait(false);
+                try
+                {
+                    await logWriter.WriteLineAsync(line).ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException)
+                {
+                    canWriteLog = false;
+                }
             }
         }
 
@@ -561,6 +615,42 @@ public sealed class RunExecutionService
     {
         var lines = tail.ToArray();
         return lines.Length == 0 ? null : string.Join(Environment.NewLine, lines);
+    }
+
+    private static bool TryGetHasExited(Process process, out bool hasExited)
+    {
+        try
+        {
+            hasExited = process.HasExited;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        hasExited = true;
+        return false;
+    }
+
+    private static bool TryGetExitCode(Process process, out int exitCode)
+    {
+        try
+        {
+            exitCode = process.ExitCode;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        exitCode = default;
+        return false;
     }
 
     private void EnqueueRecentExit(RunSessionState state)
