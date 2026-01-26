@@ -70,6 +70,58 @@ namespace RoslynMcpServer.Services
         
         public SolutionValidationResult ValidateSolutionPath(string path) => ValidatePathInternal(path, requireSolutionExtension: true);
 
+        public bool TryDetectNetFrameworkTargets(string path, out IReadOnlyList<string> frameworks)
+        {
+            frameworks = Array.Empty<string>();
+
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            var format = DeterminePathFormat(path);
+            if (format == PathFormat.Unknown)
+            {
+                return false;
+            }
+
+            if (!TryNormalizePathForHost(format, path, out var workingPath, out _, out _))
+            {
+                return false;
+            }
+
+            if (!File.Exists(workingPath))
+            {
+                return false;
+            }
+
+            var projects = EnumerateProjects(workingPath);
+            if (projects.Count == 0)
+            {
+                return false;
+            }
+
+            var netFrameworks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var project in projects)
+            {
+                foreach (var tfm in project.TargetFrameworks)
+                {
+                    if (IsNetFrameworkTfm(tfm))
+                    {
+                        netFrameworks.Add(tfm);
+                    }
+                }
+            }
+
+            if (netFrameworks.Count == 0)
+            {
+                return false;
+            }
+
+            frameworks = netFrameworks.OrderBy(tfm => tfm, StringComparer.OrdinalIgnoreCase).ToArray();
+            return true;
+        }
+
         public SolutionValidationResult ValidateFilePath(string path) => ValidatePathInternal(path, requireSolutionExtension: false);
 
         public SolutionValidationResult ValidateDirectoryPath(string path, bool createIfMissing = true)

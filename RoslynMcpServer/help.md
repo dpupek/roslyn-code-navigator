@@ -85,7 +85,8 @@ Welcome! This server exposes C# code navigation and analysis tooling through the
 1. Call **ListBuildRunners** to confirm the desired dotnet SDK version is installed (e.g., 10.0.100). If you need a specific SDK, pass `sdkVersion="10.0.100"` to **BuildSolution**/**TestSolution**.
 2. Run **BuildSolution** with your `/mnt/.../Solution.sln` path, `configuration=Debug` (or Release), and any extra `dotnet` switches via `additionalArguments`. Set `compileViews=true` to force Razor/MVC view compilation at build time.
 3. If you only need tests, call **TestSolution** instead; set `collectTrx=true` to generate TRX logs automatically.
-4. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
+4. If the tool reports that the solution targets .NET Framework, switch to **LegacyMsBuild**/**LegacyVsTest** and ensure Visual Studio Build Tools/targeting packs are installed (or set `ROSLYN_MSBUILD_SDK_PATH` to an `MSBuild.exe` path).
+5. Review the summarized stdout/stderr. For longer logs, re-run the tool with fewer verbosity switches or inspect the Windows logs directly.
 
 ### Run tests without blocking (async pipeline)
 1. Call **StartTest** with your `/mnt/.../Solution.sln` path, `configuration`, and any extra `dotnet` args. Use `logDirectory` to control where full logs + TRX artifacts are written.

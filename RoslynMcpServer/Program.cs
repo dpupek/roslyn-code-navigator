@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using System.Reflection;
 using System.IO;
 using System.Linq;
 
@@ -19,6 +20,13 @@ namespace RoslynMcpServer
     {
         static async Task Main(string[] args)
         {
+            var cliResponse = GetCliResponse(args);
+            if (cliResponse != null)
+            {
+                Console.WriteLine(cliResponse);
+                return;
+            }
+
             // Create a temporary logger for early initialization
             using var loggerFactory = LoggerFactory.Create(builder =>
                 builder.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Information));
@@ -92,6 +100,28 @@ namespace RoslynMcpServer
 
         private const string MsbuildPathOverrideVariable = "ROSLYN_MSBUILD_SDK_PATH";
         private const string MsbuildDisableNodeReuseVariable = "MSBUILDDISABLENODEREUSE";
+        private const string CliHelpText = @"Roslyn MCP Server (codenav-mcp)
+
+Usage:
+  codenav-mcp [--help] [--version]
+
+Description:
+  Starts the Roslyn MCP server over stdio for use by MCP clients.
+
+Agent setup (Codex / MCP):
+  1) Add the server to your MCP config and point to the installed tool:
+     [mcp_servers.roslyn_code_navigator]
+     command = ""codenav-mcp""
+     args = []
+
+  2) (Optional) Tune timeouts and env:
+     tool_timeout_sec = 120
+     env = { ROSLYN_LOG_LEVEL = ""Information"" }
+
+Notes:
+  - Use the MCP tool 'ShowHelp' or resource 'resource://roslyn/help' for full tool docs.
+  - On Windows, ensure the .NET SDK and MSBuild are installed.
+";
         private static readonly string[] EnvironmentSnapshotKeys = new[]
         {
             MsbuildPathOverrideVariable,
@@ -244,6 +274,8 @@ namespace RoslynMcpServer
             EnsureNuGetPackageRoot();
             EnsureMsbuildNodeReuseSetting(logger);
 
+            var hasExplicitFallback = HasExplicitFallbackConfiguration();
+
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 Environment.SetEnvironmentVariable("DisableImplicitNuGetFallbackFolder", "true");
@@ -256,7 +288,7 @@ namespace RoslynMcpServer
                     Environment.SetEnvironmentVariable("RestoreAdditionalProjectFallbackFolders", translated);
                 }
 
-                ValidateFallbackPaths(logger);
+                ValidateFallbackPaths(logger, requireExisting: hasExplicitFallback);
                 return;
             }
 
@@ -265,12 +297,21 @@ namespace RoslynMcpServer
             if (configuredFallbacks.Count == 0)
             {
                 var defaultFallback = @"C:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages";
-                Environment.SetEnvironmentVariable("NUGET_FALLBACK_PACKAGES", defaultFallback);
-                Environment.SetEnvironmentVariable("RestoreAdditionalProjectFallbackFolders", defaultFallback);
-                configuredFallbacks.Add(defaultFallback);
+                if (Directory.Exists(defaultFallback))
+                {
+                    Environment.SetEnvironmentVariable("NUGET_FALLBACK_PACKAGES", defaultFallback);
+                    Environment.SetEnvironmentVariable("RestoreAdditionalProjectFallbackFolders", defaultFallback);
+                    configuredFallbacks.Add(defaultFallback);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "NuGet fallback folder '{FallbackPath}' not found. Continuing without fallback (set NUGET_FALLBACK_PACKAGES or RestoreAdditionalProjectFallbackFolders to override).",
+                        defaultFallback);
+                }
             }
 
-            ValidateFallbackPaths(logger);
+            ValidateFallbackPaths(logger, requireExisting: hasExplicitFallback);
         }
 
         private static ToolchainInventory CollectToolchainInventory(ILogger logger, IReadOnlyList<string> runtimeProbePaths, IReadOnlyList<DotnetRuntimeInfo> runtimeInfos)
@@ -503,7 +544,7 @@ namespace RoslynMcpServer
             return paths;
         }
 
-        private static void ValidateFallbackPaths(ILogger logger)
+        private static void ValidateFallbackPaths(ILogger logger, bool requireExisting)
         {
             var fallbackPaths = GetConfiguredFallbackPaths();
             if (fallbackPaths.Count == 0)
@@ -522,11 +563,27 @@ namespace RoslynMcpServer
 
             foreach (var path in missing)
             {
-                logger.LogError("Required NuGet fallback folder '{FallbackPath}' does not exist.", path);
+                if (requireExisting)
+                {
+                    logger.LogError("Required NuGet fallback folder '{FallbackPath}' does not exist.", path);
+                }
+                else
+                {
+                    logger.LogWarning("NuGet fallback folder '{FallbackPath}' does not exist; continuing without it.", path);
+                }
             }
 
-            logger.LogError("Set NUGET_FALLBACK_PACKAGES or RestoreAdditionalProjectFallbackFolders to a valid folder before starting the server.");
-            Environment.Exit(1);
+            if (requireExisting)
+            {
+                logger.LogError("Set NUGET_FALLBACK_PACKAGES or RestoreAdditionalProjectFallbackFolders to a valid folder before starting the server.");
+                Environment.Exit(1);
+            }
+        }
+
+        private static bool HasExplicitFallbackConfiguration()
+        {
+            return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NUGET_FALLBACK_PACKAGES"))
+                || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RestoreAdditionalProjectFallbackFolders"));
         }
 
         private static StartupEnvironmentInfo CaptureStartupInfo(MsbuildRegistrationInfo msbuildInfo, ToolchainInventory toolchain)
@@ -604,6 +661,44 @@ namespace RoslynMcpServer
             }
 
             return null;
+        }
+
+        internal static string? GetCliResponse(string[] args)
+        {
+            if (args.Length == 0)
+            {
+                return null;
+            }
+
+            if (args.Any(arg => string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(arg, "/?", StringComparison.OrdinalIgnoreCase)))
+            {
+                return CliHelpText;
+            }
+
+            if (args.Any(arg => string.Equals(arg, "--version", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(arg, "-v", StringComparison.OrdinalIgnoreCase)))
+            {
+                return GetVersionText();
+            }
+
+            return null;
+        }
+
+        private static string GetVersionText()
+        {
+            var assembly = typeof(Program).Assembly;
+            var informational = assembly
+                .GetCustomAttributes<AssemblyInformationalVersionAttribute>()
+                .FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(informational?.InformationalVersion))
+            {
+                return informational!.InformationalVersion;
+            }
+
+            return assembly.GetName().Version?.ToString() ?? "unknown";
         }
 
         private static IReadOnlyList<string> DetectSharedRuntimeDirectories(ILogger logger, out IReadOnlyList<DotnetRuntimeInfo> runtimeInfos)

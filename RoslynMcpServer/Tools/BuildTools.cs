@@ -74,7 +74,10 @@ public static class BuildTools
         catch (Exception ex)
         {
             LogError(serviceProvider, ex, "dotnet build failed");
-            return $"Error: {ex.Message}";
+            var legacyHint = BuildLegacyToolHint(serviceProvider, solutionPath);
+            return string.IsNullOrEmpty(legacyHint)
+                ? $"Error: {ex.Message}"
+                : $"Error: {ex.Message}\n{legacyHint}";
         }
     }
 
@@ -151,12 +154,16 @@ public static class BuildTools
         catch (Exception ex)
         {
             LogError(serviceProvider, ex, "dotnet test failed");
+            var legacyHint = BuildLegacyToolHint(serviceProvider, solutionPath);
+            var hintText = string.IsNullOrEmpty(legacyHint)
+                ? string.Empty
+                : $"\n{legacyHint}";
             return new TestRunResult(
                 false,
                 -1,
                 "dotnet",
                 string.Empty,
-                $"Error: {ex.Message} \nTry: increase tool_timeout_sec (e.g., 240s), stop running ASP.NET sessions that may lock binaries, add --no-restore, /p:RunAnalyzers=false, -m:1, or narrow tests with --filter.",
+                $"Error: {ex.Message}{hintText} \nTry: increase tool_timeout_sec (e.g., 240s), stop running ASP.NET sessions that may lock binaries, add --no-restore, /p:RunAnalyzers=false, -m:1, or narrow tests with --filter.",
                 trxPath,
                 trxToken);
         }
@@ -207,7 +214,11 @@ public static class BuildTools
         catch (Exception ex)
         {
             LogError(serviceProvider, ex, "dotnet test start failed");
-            return new TestRunStartResult(false, $"Error: {ex.Message}");
+            var legacyHint = BuildLegacyToolHint(serviceProvider, solutionPath);
+            var message = string.IsNullOrEmpty(legacyHint)
+                ? $"Error: {ex.Message}"
+                : $"Error: {ex.Message}\n{legacyHint}";
+            return new TestRunStartResult(false, message);
         }
     }
 
@@ -367,6 +378,23 @@ public static class BuildTools
         return args is null || args.Length == 0
             ? Array.Empty<string>()
             : args.Where(a => !string.IsNullOrWhiteSpace(a)).ToArray();
+    }
+
+    private static string BuildLegacyToolHint(IServiceProvider? serviceProvider, string solutionPath)
+    {
+        var validator = serviceProvider?.GetService<SecurityValidator>();
+        if (validator == null)
+        {
+            return string.Empty;
+        }
+
+        if (!validator.TryDetectNetFrameworkTargets(solutionPath, out var frameworks) || frameworks.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var frameworkList = string.Join(", ", frameworks);
+        return $"This solution targets .NET Framework ({frameworkList}). Use LegacyMsBuild/LegacyVsTest and install Visual Studio Build Tools/targeting packs (or set ROSLYN_MSBUILD_SDK_PATH to an MSBuild.exe path).";
     }
 
     private static string[]? ApplyCompileViews(string[]? args, bool compileViews)
