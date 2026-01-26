@@ -53,13 +53,15 @@ Use this server when you need compiler-accurate, MSBuild-aware analysis of mediu
 
 ## Quickstart (Codex CLI)
 
-1. Clone and publish the server:
+1. Install the tool:
    ```powershell
-   git clone https://github.com/dpupek/roslyn-code-navigator.git
-   cd roslyn-code-navigator
-   pwsh scripts/build-and-publish.ps1
+   dotnet tool install --global Dpupek.Code.Nav.Mcp
    ```
-2. Copy the printed `[mcp_servers.roslyn_code_navigator]` TOML block into your `~/.codex/config.toml`.
+2. Add the MCP entry to `~/.codex/config.toml`:
+   ```toml
+   [mcp_servers.roslyn_code_navigator]
+   command = "codenav-mcp"
+   ```
 3. Restart Codex CLI so it picks up the new server.
 4. Verify the connection:
    ```powershell
@@ -68,11 +70,13 @@ Use this server when you need compiler-accurate, MSBuild-aware analysis of mediu
    ```
 5. Start chatting and use the prompt recipes below to drive symbol search, dependency analysis, and build/test runs via `roslyn_code_navigator`.
 
+> Prefer building from source? See the setup guide below for cloning + `scripts/build-and-publish.ps1`.
+
 ## Setup (Zero-to-Ready Guide)
 
 > All commands below assume you’re in a Windows PowerShell prompt (or the VS Developer PowerShell).
 
-### 1. Download the sources
+### 1. Download the sources (optional)
 ```powershell
 git clone https://github.com/dpupek/roslyn-code-navigator.git
 cd roslyn-code-navigator
