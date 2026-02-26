@@ -330,9 +330,4 @@ The server features a modular architecture with:
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Author
-
-Christopher Arquiza
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+Dan Pupek
